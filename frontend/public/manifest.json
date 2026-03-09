@@ -1,0 +1,20 @@
+{
+  "short_name": "Natango",
+  "name": "Natango OS",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#0056FF",
+  "background_color": "#F7F8FA"
+}
