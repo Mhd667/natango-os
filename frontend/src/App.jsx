@@ -512,7 +512,7 @@ export default function App() {
   // =====================================================
   if (currentUser && currentUser.role === 'Public') {
     return (
-      <div className={`h-screen w-full flex justify-center font-sans ${isDarkMode ? "bg-black text-white" : "bg-gray-50 text-gray-900"}`}>
+      <div className={`fixed inset-0 flex justify-center font-sans overflow-hidden ${isDarkMode ? "bg-black text-white" : "bg-gray-50 text-gray-900"}`}>
         <div className="w-full max-w-md bg-white dark:bg-[#0b141a] flex flex-col h-full relative overflow-hidden shadow-2xl border-x border-gray-200 dark:border-black">
           <div className="pt-12 pb-6 px-6 bg-[#0056FF] text-white flex items-center gap-4 shadow-md rounded-b-[30px] z-10">
             <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center p-2"><img src="/logo.png" className="w-full h-full object-contain" alt="logo" /></div>
@@ -564,7 +564,7 @@ export default function App() {
   // VUE : APP CLASSIQUE (DG / AGENT)
   // =====================================================
   return (
-    <div className={`h-screen w-full flex justify-center font-sans transition-colors duration-300 ${isDarkMode ? "bg-black text-gray-100" : "bg-[#F7F8FA] text-gray-900"}`}>
+    <div className={`fixed inset-0 flex justify-center font-sans overflow-hidden transition-colors duration-300 ${isDarkMode ? "bg-black text-gray-100" : "bg-[#F7F8FA] text-gray-900"}`}>
 
       {!currentUser ? (
         <div className="w-full max-w-md bg-white dark:bg-[#0b141a] flex flex-col h-full relative overflow-hidden shadow-2xl border-x border-gray-200 dark:border-[#111b21]">
