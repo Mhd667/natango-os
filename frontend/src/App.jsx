@@ -124,6 +124,14 @@ export default function App() {
   const [chats, setChats] = useState({});
   const [callHistoryList, setCallHistoryList] = useState([]);
 
+  // Desktop detection (breakpoint: 768px)
+  const [isDesktop, setIsDesktop] = useState(typeof window !== 'undefined' && window.innerWidth >= 768);
+  useEffect(() => {
+    const handleResize = () => setIsDesktop(window.innerWidth >= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   useEffect(() => {
     if (isDarkMode) { document.documentElement.classList.add('dark'); document.body.style.backgroundColor = '#0b141a'; }
     else { document.documentElement.classList.remove('dark'); document.body.style.backgroundColor = '#F7F8FA'; }
@@ -612,14 +620,127 @@ export default function App() {
           </div>
         </div>
       ) : (
-        <div className={`w-full h-full bg-white dark:bg-[#0b141a] flex flex-col relative overflow-hidden border-x border-gray-200 dark:border-black shadow-2xl transition-all duration-500 ease-in-out ${activeOverlay === 'dashboard' ? 'max-w-6xl' : 'max-w-md'}`}>
+        <div className={`w-full h-full bg-white dark:bg-[#0b141a] flex flex-col md:flex-row relative overflow-hidden border-x border-gray-200 dark:border-black shadow-2xl transition-all duration-500 ease-in-out ${activeOverlay === 'dashboard' ? 'max-w-6xl' : 'max-w-md md:max-w-5xl'}`}>
           {toastMessage && (<div className="absolute top-12 left-1/2 -translate-x-1/2 bg-gray-900 dark:bg-[#202c33] text-white px-5 py-2.5 rounded-full text-[13px] font-medium z-[200] animate-in fade-in shadow-lg flex items-center gap-2"><CheckCircle2 size={16} className="text-green-400 dark:text-[#00a884]" /> {toastMessage}</div>)}
 
+          {/* ============ DESKTOP SIDEBAR ============ */}
+          <div className="hidden md:flex md:w-80 md:shrink-0 flex-col h-full border-r border-gray-100 dark:border-[#202c33] bg-white dark:bg-[#0b141a]">
+            {/* Sidebar Nav Tabs */}
+            <div className="flex items-center justify-around px-2 pt-3 pb-1 border-b border-gray-100 dark:border-[#202c33] shrink-0">
+              <button onClick={() => setActiveView('chat_list')} className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-[13px] font-black transition-all ${activeView === 'chat_list' || activeView === 'conversation' ? 'bg-blue-50 dark:bg-[#202c33] text-[#0056FF] dark:text-[#00a884]' : 'text-gray-400 hover:text-gray-600'}`}><MessageCircle size={18} /> Capteurs</button>
+              <button onClick={() => setActiveView('call_history')} className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-[13px] font-black transition-all ${activeView === 'call_history' ? 'bg-blue-50 dark:bg-[#202c33] text-[#0056FF] dark:text-[#00a884]' : 'text-gray-400 hover:text-gray-600'}`}><Phone size={18} /> Calls</button>
+              {currentUser.role === 'DG' && (<button onClick={() => setActiveOverlay('dashboard')} className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-[13px] font-black transition-all ${activeOverlay === 'dashboard' ? 'bg-blue-50 dark:bg-[#202c33] text-[#0056FF] dark:text-[#00a884]' : 'text-gray-400 hover:text-gray-600'}`}><LayoutDashboard size={18} /> Live</button>)}
+              <button onClick={() => setActiveView('profile')} className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-[13px] font-black transition-all ${activeView === 'profile' ? 'bg-blue-50 dark:bg-[#202c33] text-[#0056FF] dark:text-[#00a884]' : 'text-gray-400 hover:text-gray-600'}`}><User size={18} /></button>
+            </div>
+
+            {/* Sidebar Content */}
+            <div className="flex-1 overflow-y-auto">
+              {/* SIDEBAR: CHAT LIST */}
+              {(activeView === 'chat_list' || activeView === 'conversation') && !isCallActive && (
+                <div className="flex-1 flex flex-col">
+                  <div className="pt-5 pb-3 px-5 shrink-0"><h1 className="text-xl font-extrabold dark:text-[#e9edef] mb-3">Capteurs Natango</h1><div className="bg-gray-100 dark:bg-[#202c33] flex items-center px-4 py-2 rounded-2xl"><Search size={16} className="text-gray-400 mr-2" /><input type="text" placeholder="Rechercher" className="bg-transparent flex-1 outline-none text-[14px] dark:text-[#e9edef]" /></div></div>
+                  <div className="flex-1 overflow-y-auto">
+                    {Object.entries(chats).map(([id, chat]) => (
+                      <div key={id} onClick={() => { setActiveChatId(id); setActiveView('conversation'); }} className={`flex items-center px-4 py-3 hover:bg-gray-50 dark:hover:bg-[#111b21] cursor-pointer transition-colors ${activeChatId === id ? 'bg-blue-50/50 dark:bg-[#111b21]' : ''}`}>
+                        <div className={`w-11 h-11 bg-gray-100 dark:bg-[#111b21] rounded-xl border border-gray-100 dark:border-[#202c33] p-1.5 flex shrink-0 ${id === 'marketing' ? 'border-purple-200 bg-purple-50' : ''}`}>
+                          {id === 'marketing' ? <BarChart size={22} className="text-purple-500 m-auto" /> : <img src="/logo.png" className={`w-full h-full object-contain ${id !== 'hub' && id !== 'terrain' ? 'grayscale opacity-70' : ''}`} alt="av" />}
+                        </div>
+                        <div className="ml-3 flex-1 border-b border-gray-100 dark:border-[#202c33] pb-3">
+                          <div className="flex justify-between items-baseline mb-0.5"><h3 className="font-bold text-[14px] dark:text-[#e9edef]">{chat.name}</h3><ChevronRight size={14} className="text-gray-300" /></div>
+                          <div className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${chat.color} ${id === 'terrain' || id === 'hub' ? 'animate-pulse' : ''}`}></span><p className="text-[12px] text-gray-500 dark:text-[#8696a0] font-medium truncate">{chat.sub}</p></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* SIDEBAR: CALL HISTORY */}
+              {activeView === 'call_history' && !isCallActive && (
+                <div className="flex-1 flex flex-col">
+                  <div className="pt-5 pb-3 px-5 shrink-0"><h1 className="text-xl font-extrabold dark:text-[#e9edef] mb-3">Intelligence Meeting</h1><div className="bg-gray-100 dark:bg-[#202c33] flex items-center px-4 py-2 rounded-2xl"><Search size={16} className="text-gray-400 mr-2" /><input type="text" placeholder="Rechercher" className="bg-transparent flex-1 outline-none text-[14px] dark:text-[#e9edef]" /></div></div>
+                  <div className="flex-1 overflow-y-auto px-2 space-y-2 pb-4 pt-2">
+                    {callHistoryList.map((call) => {
+                      const doneCount = (call.actions || []).filter(a => (typeof a === 'object' ? a.status : '') === 'done').length;
+                      const total = (call.actions || []).length;
+                      return (
+                        <div key={call.id} className="bg-white dark:bg-[#111b21] p-4 rounded-2xl border border-gray-100 dark:border-[#202c33] shadow-sm">
+                          <div className="flex justify-between items-start mb-2">
+                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${call.type === 'incoming' ? 'bg-green-50 dark:bg-green-900/20 text-green-600' : 'bg-blue-50 dark:bg-blue-900/20 text-blue-600'}`}>{call.type === 'incoming' ? <PhoneIncoming size={16} /> : <PhoneOutgoing size={16} />}</div>
+                            <span className="text-[10px] font-bold text-gray-400 bg-gray-50 dark:bg-[#202c33] px-2 py-0.5 rounded-full">{call.date}</span>
+                          </div>
+                          <h3 className="font-bold text-[14px] dark:text-[#e9edef] mb-1">{call.title}</h3>
+                          <div className="flex items-center gap-3 mb-2">
+                            <span className="text-[11px] text-gray-500 flex items-center gap-1"><Clock size={12} /> {call.duration}</span>
+                            <span className="text-[11px] font-bold text-green-600 dark:text-[#00a884] flex items-center gap-1"><CheckCircle2 size={12} /> {doneCount}/{total}</span>
+                          </div>
+                          <button onClick={() => setSelectedCall(call)} className="w-full flex items-center justify-center gap-2 text-[12px] font-bold text-[#0056FF] dark:text-[#00a884] bg-blue-50 dark:bg-[#202c33] py-2 rounded-xl active:scale-95"><AlignLeft size={14} /> Rapport</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* SIDEBAR: PROFILE */}
+              {activeView === 'profile' && !isCallActive && (
+                <div className="flex-1 flex flex-col overflow-y-auto">
+                  <div className="pt-5 pb-4 px-5 border-b border-gray-100 dark:border-[#202c33]">
+                    <h1 className="text-xl font-extrabold dark:text-[#e9edef] mb-4">Profil {currentUser.role}</h1>
+                    <div className="flex items-center gap-4">
+                      <div className="w-16 h-16 rounded-full bg-gray-100 dark:bg-[#111b21] flex items-center justify-center overflow-hidden border-3 border-gray-200 dark:border-[#202c33]">
+                        {formData.photo ? <img src={formData.photo} className="w-full h-full object-cover" /> : <User size={32} className="text-gray-400" />}
+                      </div>
+                      <div>
+                        <h2 className="text-lg font-black dark:text-white">{formData.name}</h2>
+                        <p className="text-sm text-gray-500 dark:text-[#8696a0]">{formData.phone}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="p-4 space-y-3">
+                    <div className="bg-gray-50 dark:bg-[#111b21] rounded-2xl p-4 flex items-center justify-between border border-gray-100 dark:border-[#202c33]">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-indigo-100 dark:bg-[#202c33] flex items-center justify-center text-indigo-500">{isDarkMode ? <Moon size={18} /> : <Sun size={18} />}</div>
+                        <p className="text-[14px] font-bold dark:text-[#e9edef]">Mode Sombre</p>
+                      </div>
+                      <button onClick={() => setIsDarkMode(!isDarkMode)} className={`w-12 h-6 rounded-full p-0.5 ${isDarkMode ? 'bg-[#00a884]' : 'bg-gray-300'}`}>
+                        <div className={`w-5 h-5 rounded-full bg-white shadow-md transition-transform ${isDarkMode ? 'translate-x-6' : 'translate-x-0'}`}></div>
+                      </button>
+                    </div>
+                    <div className="bg-gray-50 dark:bg-[#111b21] rounded-2xl p-4 border border-gray-100 dark:border-[#202c33]">
+                      <p className="text-[10px] text-gray-400 uppercase font-black tracking-widest mb-1">Poste</p>
+                      <p className="text-[14px] font-bold dark:text-[#e9edef]">{formData.role === 'DG' ? 'Directeur Général' : 'Agent de Terrain'}</p>
+                    </div>
+                    {currentUser.role === 'Agent' && (
+                      <>
+                        <div className="bg-blue-50 dark:bg-[#111b21] border border-blue-100 dark:border-[#202c33] rounded-2xl p-4 flex items-center gap-3">
+                          <div className="w-10 h-10 bg-blue-100 dark:bg-[#202c33] rounded-xl flex items-center justify-center text-[#0056FF] dark:text-[#00a884]"><Target size={20} /></div>
+                          <div>
+                            <p className="text-[10px] text-[#0056FF] dark:text-[#00a884] uppercase font-black tracking-widest">Mission</p>
+                            <p className="text-[13px] font-bold dark:text-[#e9edef]">{getDynamicMission(formData.name)}</p>
+                          </div>
+                        </div>
+                        <div className="bg-orange-50 dark:bg-[#111b21] border border-orange-100 dark:border-[#202c33] rounded-2xl p-4 flex items-center gap-3">
+                          <div className="w-10 h-10 bg-orange-100 dark:bg-[#202c33] rounded-xl flex items-center justify-center text-orange-500"><Award size={20} /></div>
+                          <div>
+                            <p className="text-[10px] text-orange-500 uppercase font-black tracking-widest">Performance</p>
+                            <p className="text-[14px] font-black dark:text-[#e9edef]">{agentXP} XP</p>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ============ MAIN CONTENT AREA ============ */}
           <div className="flex-1 overflow-hidden flex flex-col relative">
 
-            {/* CHAT LIST */}
+            {/* MOBILE CHAT LIST (hidden on desktop) */}
             {activeView === 'chat_list' && !isCallActive && (
-              <div className="flex-1 flex flex-col animate-in fade-in h-full absolute inset-0 bg-white dark:bg-[#0b141a] z-10">
+              <div className="flex-1 flex flex-col animate-in fade-in h-full absolute inset-0 bg-white dark:bg-[#0b141a] z-10 md:hidden">
                 <div className="pt-12 pb-4 px-5 shrink-0"><h1 className="text-3xl font-extrabold dark:text-[#e9edef] mb-5">Capteurs Natango</h1><div className="bg-gray-100 dark:bg-[#202c33] flex items-center px-4 py-2.5 rounded-2xl"><Search size={18} className="text-gray-400 mr-3" /><input type="text" placeholder="Rechercher" className="bg-transparent flex-1 outline-none text-[15px] dark:text-[#e9edef]" /></div></div>
                 <div className="flex-1 overflow-y-auto pb-4">
                   {Object.entries(chats).map(([id, chat]) => (
@@ -637,9 +758,9 @@ export default function App() {
               </div>
             )}
 
-            {/* CALLS */}
+            {/* MOBILE CALLS (hidden on desktop) */}
             {activeView === 'call_history' && !isCallActive && (
-              <div className="flex-1 flex flex-col animate-in fade-in h-full absolute inset-0 bg-white dark:bg-[#0b141a] z-10">
+              <div className="flex-1 flex flex-col animate-in fade-in h-full absolute inset-0 bg-white dark:bg-[#0b141a] z-10 md:hidden">
                 <div className="pt-12 pb-4 px-5 shrink-0"><h1 className="text-3xl font-extrabold dark:text-[#e9edef] mb-5">Intelligence Meeting</h1><div className="bg-gray-100 dark:bg-[#202c33] flex items-center px-4 py-2.5 rounded-2xl"><Search size={18} className="text-gray-400 mr-3" /><input type="text" placeholder="Rechercher" className="bg-transparent flex-1 outline-none text-[15px] dark:text-[#e9edef]" /></div></div>
                 <div className="flex-1 overflow-y-auto px-2 space-y-2 pb-4">
                   {callHistoryList.map((call) => {
@@ -666,11 +787,11 @@ export default function App() {
             )}
 
             {/* CONVERSATION */}
-            {activeView === 'conversation' && !isCallActive && (
-              <div className="flex-1 flex flex-col animate-in slide-in-from-right-full h-full absolute inset-0 z-20 bg-natango-pattern dark:bg-[#0b141a]">
+            {(isDesktop || activeView === 'conversation') && !isCallActive && (
+              <div className={`flex-1 flex flex-col h-full absolute inset-0 z-20 bg-natango-pattern dark:bg-[#0b141a] ${!isDesktop ? 'animate-in slide-in-from-right-full' : ''}`}>
                 <div className="h-16 bg-white/80 dark:bg-[#111b21]/80 backdrop-blur-md border-b border-gray-100 dark:border-[#202c33] flex items-center justify-between px-3 z-20 shrink-0">
                   <div className="flex items-center gap-1">
-                    <button onClick={() => setActiveView('chat_list')} className="p-2 text-gray-600 dark:text-[#8696a0] rounded-full"><ArrowLeft size={24} /></button>
+                    <button onClick={() => setActiveView('chat_list')} className="p-2 text-gray-600 dark:text-[#8696a0] rounded-full md:hidden"><ArrowLeft size={24} /></button>
                     <div className={`w-10 h-10 bg-gray-100 dark:bg-[#202c33] rounded-xl flex overflow-hidden items-center justify-center ${activeChatId === 'marketing' ? 'bg-purple-100' : ''}`}>{activeChatId === 'marketing' ? <BarChart size={20} className="text-purple-500" /> : <img src="/logo.png" className={`w-full h-full object-contain ${activeChatId === 'rh' ? 'grayscale' : ''}`} alt="av" />}</div>
                     <div className="flex flex-col ml-2"><span className="font-bold text-[15px] dark:text-[#e9edef]">{chats[activeChatId]?.name}</span><span className="text-[11px] text-green-500 dark:text-[#00a884] font-bold uppercase">Live Sync</span></div>
                   </div>
@@ -788,9 +909,9 @@ export default function App() {
               </div>
             )}
 
-            {/* ✅ RÉINTÉGRÉ : VUE PROFIL COMPLÈTE */}
+            {/* MOBILE PROFILE (hidden on desktop — profile is in sidebar) */}
             {activeView === 'profile' && !isCallActive && (
-              <div className="flex-1 flex flex-col animate-in fade-in h-full absolute inset-0 bg-white dark:bg-[#0b141a] z-10 overflow-y-auto">
+              <div className="flex-1 flex flex-col animate-in fade-in h-full absolute inset-0 bg-white dark:bg-[#0b141a] z-10 overflow-y-auto md:hidden">
                 <div className="pt-12 pb-6 px-5 border-b border-gray-100 dark:border-[#202c33]">
                   <h1 className="text-3xl font-extrabold dark:text-[#e9edef] mb-6">Profil {currentUser.role}</h1>
                   <div className="flex items-center gap-5">
@@ -1057,8 +1178,9 @@ export default function App() {
           </div>
 
           {/* NAV */}
+          {/* MOBILE NAV (hidden on desktop) */}
           {!isCallActive && (
-            <div className="h-18 bg-white dark:bg-[#111b21] border-t border-gray-100 dark:border-white/5 flex items-center justify-around px-3 z-30 shrink-0 pb-safe">
+            <div className="h-18 bg-white dark:bg-[#111b21] border-t border-gray-100 dark:border-white/5 flex items-center justify-around px-3 z-30 shrink-0 pb-safe md:hidden">
               <button onClick={() => setActiveView('chat_list')} className={`flex flex-col items-center gap-1.5 ${activeView === 'chat_list' || activeView === 'conversation' ? 'text-[#0056FF] dark:text-[#00a884] scale-110' : 'text-gray-400 opacity-60'}`}><MessageCircle size={26} className={activeView === 'chat_list' || activeView === 'conversation' ? "fill-current" : ""} /><span className="text-[10px] font-black uppercase">Capteurs</span></button>
               <button onClick={() => setActiveView('call_history')} className={`flex flex-col items-center gap-1.5 ${activeView === 'call_history' ? 'text-[#0056FF] dark:text-[#00a884] scale-110' : 'text-gray-400 opacity-60'}`}><Phone size={26} className={activeView === 'call_history' ? "fill-current" : ""} /><span className="text-[10px] font-black uppercase">Calls</span></button>
               {currentUser.role === 'DG' && (<button onClick={() => setActiveOverlay('dashboard')} className={`flex flex-col items-center gap-1.5 ${activeOverlay === 'dashboard' ? 'text-[#0056FF] dark:text-[#00a884] scale-110' : 'text-gray-400 opacity-60'}`}><LayoutDashboard size={26} className={activeOverlay === 'dashboard' ? "fill-current" : ""} /><span className="text-[10px] font-black uppercase">Live</span></button>)}
