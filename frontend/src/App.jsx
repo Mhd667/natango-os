@@ -107,7 +107,7 @@ export default function App() {
   const [resolvedTasks, setResolvedTasks] = useState([]);
 
   const [publicStep, setPublicStep] = useState(1);
-  const [publicZone, setPublicZone] = useState('Sud');
+  const [publicZone, setPublicZone] = useState('');
   const [citizenData, setCitizenData] = useState({ name: '', phone: '', type: 'Débordement de bac' });
 
   const messagesEndRef = useRef(null);
@@ -152,6 +152,34 @@ export default function App() {
   useEffect(() => {
     if (currentUser && currentUser.role === 'Public') {
       setCitizenData(prev => ({ ...prev, name: currentUser.name, phone: currentUser.phone }));
+    }
+  }, [currentUser]);
+
+  // TRACKING GPS EN ARRIÈRE-PLAN (Heartbeat pour le RAG et le Radar)
+  useEffect(() => {
+    if (currentUser && currentUser.role === 'Agent') {
+      const sendLocation = () => {
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              // SAUVEGARDE LA POSITION EN DIRECT POUR LE RADAR
+              setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+
+              fetch('https://natango-os.onrender.com/api/heartbeat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone: currentUser.phone, name: currentUser.name, lat: pos.coords.latitude, lng: pos.coords.longitude })
+              }).catch(() => { });
+            },
+            () => { },
+            { enableHighAccuracy: true }
+          );
+        }
+      };
+
+      const heart = setInterval(sendLocation, 20000);
+      sendLocation();
+      return () => clearInterval(heart);
     }
   }, [currentUser]);
 
@@ -216,6 +244,23 @@ export default function App() {
     return () => stopCamera();
   }, [activeOverlay, checkinPhoto]);
 
+  // --- GPS TEMPS RÉEL POUR LE RADAR (watchPosition quand le radar est ouvert) ---
+  useEffect(() => {
+    let watchId = null;
+    if (activeOverlay === 'route' && navigator.geolocation) {
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        },
+        () => { },
+        { enableHighAccuracy: true, maximumAge: 2000 }
+      );
+    }
+    return () => {
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+    };
+  }, [activeOverlay]);
+
   const showToast = (message) => { setToastMessage(message); setTimeout(() => setToastMessage(null), 3500); };
 
   const startCamera = async () => {
@@ -225,18 +270,39 @@ export default function App() {
   const stopCamera = () => { if (videoRef.current && videoRef.current.srcObject) { videoRef.current.srcObject.getTracks().forEach(track => track.stop()); setIsCameraActive(false); } };
   const takePhoto = () => {
     if (videoRef.current && canvasRef.current) {
-      const ctx = canvasRef.current.getContext('2d'); canvasRef.current.width = videoRef.current.videoWidth; canvasRef.current.height = videoRef.current.videoHeight;
-      ctx.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
-      setCheckinPhoto(canvasRef.current.toDataURL('image/jpeg')); stopCamera();
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
+
+      // On s'assure que la taille correspond exactement à la vidéo
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      // On dessine et on extrait en JPEG haute qualité
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const base64Image = canvas.toDataURL('image/jpeg', 0.9); // 0.9 = 90% de qualité
+
+      setCheckinPhoto(base64Image);
+      stopCamera();
       if (activeOverlay === 'public_report') setPublicStep(2);
     }
   };
 
   const getLocationPublic = () => {
+    setLocationStr("Recherche GPS en cours...");
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
-        (pos) => { setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setLocationStr(`✓ Position capturée`); setPublicStep(3); },
-        () => { setLocationStr("Erreur GPS (Mode Manuel)"); setPublicStep(3); }
+        (pos) => {
+          setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+          setLocationStr(`✓ Position capturée avec précision`);
+          setPublicStep(3);
+        },
+        (err) => {
+          alert("GPS désactivé ou introuvable. Position par défaut utilisée.");
+          setCoords({ lat: 14.716, lng: -17.467 });
+          setPublicStep(3);
+        },
+        { enableHighAccuracy: true, timeout: 10000 }
       );
     } else {
       setLocationStr("GPS non supporté"); setPublicStep(3);
@@ -515,6 +581,27 @@ export default function App() {
     } catch (e) { showToast("Erreur de connexion."); }
   };
 
+  // --- CALCULS GPS DE PRÉCISION (Haversine & Bearing) ---
+  const calculateDistance = (lat1, lon1, lat2, lon2) => {
+    if (!lat1 || !lon1 || !lat2 || !lon2) return 0;
+    const R = 6371e3;
+    const rad = Math.PI / 180;
+    const dLat = (lat2 - lat1) * rad;
+    const dLon = (lon2 - lon1) * rad;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return Math.round(R * c);
+  };
+
+  const calculateBearing = (lat1, lon1, lat2, lon2) => {
+    if (!lat1 || !lon1 || !lat2 || !lon2) return 0;
+    const rad = Math.PI / 180;
+    const dLon = (lon2 - lon1) * rad;
+    const y = Math.sin(dLon) * Math.cos(lat2 * rad);
+    const x = Math.cos(lat1 * rad) * Math.sin(lat2 * rad) - Math.sin(lat1 * rad) * Math.cos(lat2 * rad) * Math.cos(dLon);
+    return (Math.atan2(y, x) * (180 / Math.PI) + 360) % 360;
+  };
+
   // =====================================================
   // VUE : PUBLIC (CITOYEN)
   // =====================================================
@@ -553,8 +640,8 @@ export default function App() {
                     <div><label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-1">Type d'incident</label>
                       <select value={citizenData.type} onChange={e => setCitizenData({ ...citizenData, type: e.target.value })} className="w-full mt-1 bg-gray-50 dark:bg-[#202c33] dark:text-white rounded-2xl p-4 font-bold outline-none"><option value="Débordement de bac">Débordement de bac</option><option value="Déchets au sol">Déchets au sol</option><option value="Autre">Autre</option></select>
                     </div>
-                    <div><label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-1">Zone (Proche de)</label>
-                      <select value={publicZone} onChange={e => setPublicZone(e.target.value)} className="w-full mt-1 bg-gray-50 dark:bg-[#202c33] dark:text-white rounded-2xl p-4 font-bold outline-none"><option value="Nord">Zone Nord</option><option value="Sud">Zone Sud</option><option value="Est">Zone Est</option><option value="Ouest">Zone Ouest</option></select>
+                    <div><label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-1">Lieu précis</label>
+                      <input type="text" value={publicZone} onChange={e => setPublicZone(e.target.value)} className="w-full mt-1 bg-gray-50 dark:bg-[#202c33] dark:text-white rounded-2xl p-4 font-bold outline-none" placeholder="Ex: Près des toilettes, Marché central..." />
                     </div>
                   </div>
                   <button onClick={sendPublicReport} className="w-full py-4 bg-[#0056FF] text-white rounded-[20px] font-black text-lg shadow-xl active:scale-95 mb-6 flex justify-center items-center gap-2"><Send size={20} /> Transmettre à l'IA</button>
@@ -1042,6 +1129,74 @@ export default function App() {
               </div>
             )}
 
+            {/* DÉTAIL DE LA MISSION AGENT */}
+            {activeOverlay === 'task_detail' && currentTaskData && (
+              <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in">
+                <div className="w-full max-w-md bg-white dark:bg-[#111b21] rounded-[40px] shadow-2xl flex flex-col overflow-hidden border border-gray-100 dark:border-white/10">
+
+                  {/* Header */}
+                  <div className="flex justify-between items-center px-6 py-5 border-b border-gray-100 dark:border-white/5">
+                    <h3 className="font-black text-xl dark:text-white flex items-center gap-3"><AlertTriangle size={22} className="text-[#0056FF]" /> Mission Tactique</h3>
+                    <button onClick={() => setActiveOverlay(null)} className="bg-gray-100 dark:bg-white/5 rounded-full p-2"><X size={20} className="text-gray-500" /></button>
+                  </div>
+
+                  {/* Corps (Scrollable) */}
+                  <div className="p-6 space-y-6 overflow-y-auto max-h-[70vh]">
+
+                    {/* Photo du déchet (AVANT) */}
+                    {currentTaskData.aiAnalysisBefore?.photoBase64 && (
+                      <div className="relative w-full rounded-3xl overflow-hidden border-2 border-gray-100 dark:border-white/5 shadow-inner">
+                        <p className="absolute bg-black/70 text-white text-[10px] font-black px-3 py-1 m-3 rounded-full uppercase tracking-widest z-10">Photo du signalement (AVANT)</p>
+                        <img
+                          src={currentTaskData.aiAnalysisBefore.photoBase64}
+                          alt="Déchet signalé"
+                          className="w-full h-48 object-cover object-center transform hover:scale-105 transition-transform duration-500"
+                        />
+                      </div>
+                    )}
+
+                    {/* Infos de la mission */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-gray-50 dark:bg-[#202c33] p-4 rounded-2xl">
+                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Type d'incident</p>
+                        <p className="font-bold dark:text-white text-lg">{currentTaskData.type}</p>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-[#202c33] p-4 rounded-2xl">
+                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Urgence</p>
+                        <span className={`inline-block mt-1 font-bold px-3 py-1 rounded-full text-xs ${currentTaskData.urgency === 'Critical' ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'}`}>
+                          {currentTaskData.urgency === 'Critical' ? 'CRITIQUE' : 'HAUTE'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Analyse IA Gemini */}
+                    <div className="bg-blue-50 dark:bg-white/5 p-5 rounded-3xl border border-blue-100 dark:border-white/5 space-y-2">
+                      <p className="text-[10px] font-black text-[#0056FF] dark:text-[#00a884] uppercase tracking-widest">Analyse Gemini Vision</p>
+                      <p className="text-sm font-medium text-gray-700 dark:text-gray-200">
+                        {currentTaskData.aiAnalysisBefore?.description_ia || "Analyse en cours..."}
+                      </p>
+                    </div>
+
+                  </div>
+
+                  {/* Footer (Boutons d'action) */}
+                  <div className="p-6 border-t border-gray-100 dark:border-white/5 space-y-3">
+                    <button
+                      onClick={() => { setActiveOverlay('route'); }}
+                      className="w-full py-4 bg-[#0056FF] text-white rounded-2xl font-black text-lg shadow-xl active:scale-95 transition-all flex items-center justify-center gap-2">
+                      <Navigation size={20} /> Voir le trajet
+                    </button>
+                    <button
+                      onClick={() => { setCurrentTaskId(currentTaskData.id); setActiveOverlay('proof_photo'); }}
+                      className="w-full py-4 bg-green-600 text-white rounded-2xl font-black text-lg shadow-xl active:scale-95 transition-all flex items-center justify-center gap-2">
+                      <CheckCircle2 size={20} /> Terminer la mission
+                    </button>
+                  </div>
+
+                </div>
+              </div>
+            )}
+
             {/* CHECK-IN & PHOTO DE PREUVE */}
             {(activeOverlay === 'checkin' || activeOverlay === 'proof_photo') && (
               <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in">
@@ -1065,39 +1220,60 @@ export default function App() {
               </div>
             )}
 
-            {/* ROUTE AGENT TACTIQUE */}
+            {/* ROUTE AGENT : RADAR TACTIQUE LOCAL */}
             {activeOverlay === 'route' && currentTaskData && (
-              <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
-                <div className="w-full bg-white dark:bg-[#111b21] rounded-[40px] shadow-2xl flex flex-col overflow-hidden border border-gray-100 dark:border-white/5">
+              <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in">
+                <div className="w-full bg-white dark:bg-[#111b21] rounded-[40px] shadow-2xl flex flex-col overflow-hidden border border-gray-100 dark:border-white/10">
                   <div className="flex justify-between items-center px-6 py-5 border-b border-gray-100 dark:border-white/5">
-                    <h3 className="font-black text-xl dark:text-white flex items-center gap-3"><Navigation size={22} className="text-[#0056FF]" /> Guidage Natango</h3>
+                    <h3 className="font-black text-xl dark:text-white flex items-center gap-3"><Navigation size={22} className="text-[#0056FF]" /> Radar Natango</h3>
                     <button onClick={() => setActiveOverlay(null)} className="bg-gray-100 dark:bg-white/5 rounded-full p-2"><X size={20} className="text-gray-500" /></button>
                   </div>
-                  <div className="p-6">
-                    <div className="relative w-full h-64 bg-gray-50 dark:bg-black rounded-[32px] flex items-center justify-center border-2 border-gray-100 dark:border-white/5 overflow-hidden mb-5 shadow-inner">
-                      <div className="absolute inset-0 opacity-[0.03] dark:opacity-[0.05]" style={{ backgroundImage: 'linear-gradient(#000 1px, transparent 0), linear-gradient(90deg, #000 1px, transparent 0)', backgroundSize: '20px 20px' }}></div>
-                      <svg width="100%" height="100%" viewBox="0 0 200 200" className="relative z-10">
-                        <path d={`M 100 100 Q 120 80 ${100 + (currentTaskData.navigation?.targetX || 40)} ${100 + (currentTaskData.navigation?.targetY || -40)}`} fill="none" stroke="#0056FF" strokeWidth="4" strokeDasharray="8 8" className="animate-pulse" />
-                        <circle cx="100" cy="100" r="8" fill="white" stroke="#0056FF" strokeWidth="3" />
-                        <circle cx="100" cy="100" r="12" fill="#0056FF" fillOpacity="0.2" className="animate-ping" />
-                        <g transform={`translate(${100 + (currentTaskData.navigation?.targetX || 40)}, ${100 + (currentTaskData.navigation?.targetY || -40)})`}>
-                          <circle r="6" fill="#EF4444" />
-                          <circle r="12" fill="#EF4444" fillOpacity="0.2" className="animate-bounce" />
-                        </g>
-                      </svg>
-                      <div className="absolute bottom-4 right-4 bg-white dark:bg-[#202c33] px-4 py-2 rounded-2xl shadow-lg border border-gray-100 dark:border-white/5">
-                        <p className="text-xs font-black text-[#0056FF]">{currentTaskData.navigation?.distance || 120}m</p>
-                      </div>
-                    </div>
-                    <div className="bg-blue-50 dark:bg-white/5 p-5 rounded-3xl flex items-center gap-4">
-                      <div className="w-12 h-12 bg-white dark:bg-[#202c33] rounded-2xl flex items-center justify-center shadow-sm"><MapPin size={24} className="text-[#0056FF]" /></div>
-                      <div>
-                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Secteur d'intervention</p>
-                        <p className="text-sm font-bold dark:text-white">Zone {currentTaskData.zone} • {currentTaskData.type}</p>
-                      </div>
-                    </div>
+                  <div className="p-6 flex flex-col items-center">
+
+                    {(() => {
+                      const agentPos = coords || { lat: 14.7, lng: -17.4 };
+                      const targetPos = currentTaskData.location;
+                      const distance = calculateDistance(agentPos.lat, agentPos.lng, targetPos.lat, targetPos.lng);
+                      const bearing = calculateBearing(agentPos.lat, agentPos.lng, targetPos.lat, targetPos.lng);
+
+                      return (
+                        <>
+                          <div className="relative w-64 h-64 mb-8 bg-gray-50 dark:bg-black rounded-full flex items-center justify-center border-4 border-gray-200 dark:border-gray-800 shadow-inner overflow-hidden">
+                            <div className="absolute inset-0 rounded-full border border-[#0056FF]/20 m-8"></div>
+                            <div className="absolute inset-0 rounded-full border border-[#0056FF]/10 m-16"></div>
+                            <div className="absolute w-full h-px bg-[#0056FF]/10"></div>
+                            <div className="absolute h-full w-px bg-[#0056FF]/10"></div>
+
+                            <div className="w-4 h-4 bg-blue-500 rounded-full shadow-[0_0_15px_rgba(0,86,255,0.8)] z-10"></div>
+
+                            <div
+                              className="absolute inset-0 transition-transform duration-1000 ease-out flex items-start justify-center"
+                              style={{ transform: `rotate(${bearing}deg)` }}
+                            >
+                              <div className="mt-4 flex flex-col items-center">
+                                <Navigation size={32} className="text-red-500 drop-shadow-lg" fill="currentColor" />
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="w-full bg-blue-50 dark:bg-[#202c33] p-5 rounded-3xl flex items-center justify-between shadow-sm border border-blue-100 dark:border-white/5">
+                            <div>
+                              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Cible : Zone {currentTaskData.zone}</p>
+                              <p className="text-xl font-black text-gray-900 dark:text-white">Cap : {Math.round(bearing)}°</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Distance</p>
+                              <p className="text-3xl font-black text-[#0056FF]">{distance} <span className="text-lg">m</span></p>
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
+
                   </div>
-                  <div className="p-6 pt-0"><button onClick={() => setActiveOverlay(null)} className="w-full py-4 bg-[#0056FF] text-white rounded-2xl font-black text-lg shadow-xl active:scale-95 transition-all">J'arrive sur zone</button></div>
+                  <div className="p-6 pt-0">
+                    <button onClick={() => setActiveOverlay(null)} className="w-full py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl font-black text-lg shadow-xl active:scale-95 transition-all">Fermer le radar</button>
+                  </div>
                 </div>
               </div>
             )}
