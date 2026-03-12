@@ -56,6 +56,35 @@ function AudioPlayer({ base64, bars, mime }) {
     return `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
   };
 
+  // Générateur de son pour les notifications
+  const playSound = (type = 'ding') => {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+      osc.connect(gainNode);
+      gainNode.connect(ctx.destination);
+
+      if (type === 'ding') {
+        // Son clair style Apple Notification
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, ctx.currentTime); // Note A5
+        gainNode.gain.setValueAtTime(0.5, ctx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.5);
+      } else if (type === 'ringtone') {
+        // Sonnerie d'alarme / WhatsApp
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(400, ctx.currentTime);
+        osc.frequency.setValueAtTime(600, ctx.currentTime + 0.2);
+        gainNode.gain.setValueAtTime(0.8, ctx.currentTime);
+        osc.start();
+        osc.stop(ctx.currentTime + 1.5); // Sonnerie longue
+      }
+    } catch (e) { console.warn("Audio non supporté"); }
+  };
+
   return (
     <div className="flex items-center gap-3 w-full">
       <button onClick={togglePlay} disabled={!base64}
@@ -82,6 +111,29 @@ export default function App() {
   const [activeView, setActiveView] = useState('chat_list');
   const [activeChatId, setActiveChatId] = useState('');
   const [activeOverlay, setActiveOverlay] = useState(null);
+  const [onboardingText, setOnboardingText] = useState('');
+
+  // --- ÉTATS ONBOARDING ---
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState(1);
+
+  // --- ÉTATS RH & DOSSIER AGENT ---
+  const [selectedAgentStats, setSelectedAgentStats] = useState(null);
+
+  const openAgentDetails = async (agent) => {
+    setActiveOverlay('agent_details');
+    setSelectedAgentStats({ ...agent, loading: true });
+    try {
+      const res = await fetch(`https://natango-os.onrender.com/api/agent-stats/${agent.phone || agent.phone_number}`);
+      const data = await res.json();
+      if (data.success) {
+        setSelectedAgentStats({ ...agent, ...data.stats, loading: false });
+      }
+    } catch (e) {
+      setSelectedAgentStats({ ...agent, loading: false, error: true });
+    }
+  };
+
   const [dashboardTab, setDashboardTab] = useState('operations');
   const [selectedCall, setSelectedCall] = useState(null);
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -90,6 +142,14 @@ export default function App() {
   const [isAiTyping, setIsAiTyping] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isCallActive, setIsCallActive] = useState(false);
+
+  const [isDeclining, setIsDeclining] = useState(false);
+  const [declineReason, setDeclineReason] = useState('');
+  const [currentIncidentId, setCurrentIncidentId] = useState(null); // Pour savoir quelle mission on refuse
+
+  // --- ÉTATS FORMULAIRE RH (9H00) ---
+  const [attendanceReason, setAttendanceReason] = useState('');
+  const [attendanceStatus, setAttendanceStatus] = useState(null); // 'retard' ou 'absent'
 
   const [meetingTranscript, setMeetingTranscript] = useState("");
   const meetingTranscriptRef = useRef("");
@@ -144,8 +204,18 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const role = params.get('role');
+
     if (role === 'Public') {
       setCurrentUser({ name: 'Citoyen', role: 'Public', phone: '0000' });
+    } else {
+      // Vérifier si un agent est déjà connecté dans la mémoire du téléphone
+      const savedUser = localStorage.getItem('natangoUser');
+      if (savedUser) {
+        const parsedUser = JSON.parse(savedUser);
+        setCurrentUser(parsedUser);
+        setChats(generateInitialChats(parsedUser.role, parsedUser.name));
+        setActiveChatId(parsedUser.role === 'DG' ? 'hub' : 'terrain');
+      }
     }
   }, []);
 
@@ -200,7 +270,24 @@ export default function App() {
               });
               return newChats;
             });
-            showToast("🔔 Notification Natango reçue !");
+
+            // On vérifie le type du premier évent pour adapter le son/la notif
+            const firstEvent = data.events[0];
+            if (firstEvent.type === 'incoming_call') {
+              setCurrentIncidentId(firstEvent.messageObj.incidentId); // On mémorise l'ID
+              setActiveOverlay('incoming_call_screen');
+              playSound('ringtone');
+              if (navigator.vibrate) navigator.vibrate([500, 500, 500, 500]);
+            } else if (firstEvent.type === 'hr_attendance_prompt') {
+              // NOUVEAU : Intercepter l'alarme RH de 9h00
+              setActiveOverlay('hr_attendance_prompt_screen');
+              playSound('ding');
+              if (navigator.vibrate) navigator.vibrate([300, 200, 300]);
+            } else {
+              playSound('ding');
+              showToast({ title: "Natango OS", body: firstEvent.messageObj?.content || "Nouvelle notification" });
+              if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+            }
           }
         } catch (e) { }
       }, 3000);
@@ -213,16 +300,19 @@ export default function App() {
             if (data.success && data.task && !knownTasksRef.current.has(data.task.id)) {
               knownTasksRef.current.add(data.task.id);
               setCurrentTaskData(data.task);
+              const urgencyMsg = `URGENCE ${data.task.urgency} : ${data.task.type} signalé par Citoyen (${data.task.citizenName} - ${data.task.citizenPhone}). Zone ${data.task.zone}. Intervention immédiate requise.`;
               setChats(prev => ({
                 ...prev, 'terrain': {
                   ...prev['terrain'], messages: [...prev['terrain'].messages, {
                     id: data.task.id, type: 'action', taskId: data.task.id,
-                    content: `URGENCE ${data.task.urgency} : ${data.task.type} signalé par Citoyen (${data.task.citizenName} - ${data.task.citizenPhone}). Zone ${data.task.zone}. Intervention immédiate requise.`,
+                    content: urgencyMsg,
                     time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                   }]
                 }
               }));
-              showToast("🚨 Nouvelle mission assignée !");
+              playSound('ding');
+              showToast({ title: "Nouvelle Mission", body: urgencyMsg });
+              if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
             }
           } catch (e) { }
         }, 4000);
@@ -264,8 +354,23 @@ export default function App() {
   const showToast = (message) => { setToastMessage(message); setTimeout(() => setToastMessage(null), 3500); };
 
   const startCamera = async () => {
-    try { const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); if (videoRef.current) { videoRef.current.srcObject = stream; setIsCameraActive(true); } }
-    catch (err) { showToast("Veuillez autoriser la caméra."); }
+    try {
+      // Si on est sur l'écran de check-in, on force la caméra frontale (user).
+      // Sinon (signalement public/agent), on force la caméra arrière (environment).
+      const isSelfieMode = activeOverlay === 'checkin';
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: isSelfieMode ? 'user' : 'environment' }
+      });
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        setIsCameraActive(true);
+      }
+    } catch (err) {
+      console.error("Erreur d'accès à la caméra :", err);
+      showToast("Veuillez autoriser l'accès à la caméra.");
+    }
   };
   const stopCamera = () => { if (videoRef.current && videoRef.current.srcObject) { videoRef.current.srcObject.getTracks().forEach(track => track.stop()); setIsCameraActive(false); } };
   const takePhoto = () => {
@@ -649,7 +754,21 @@ export default function App() {
               </div>
             </div>
           )}
-          {toastMessage && (<div className="absolute top-12 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-5 py-2.5 rounded-full text-sm font-bold z-[200] animate-in fade-in shadow-lg">{toastMessage}</div>)}
+          {/* 🍏 NOTIFICATION STYLE APPLE (S'affiche par-dessus tout) */}
+          {toastMessage && (
+            <div className="absolute top-4 left-4 right-4 z-[300] bg-[#111b21]/90 backdrop-blur-xl border border-white/10 p-4 rounded-3xl shadow-2xl flex items-start gap-4 animate-in slide-in-from-top fade-in duration-300">
+              <div className="w-10 h-10 rounded-2xl bg-[#0056FF] flex items-center justify-center flex-shrink-0">
+                <Bell size={20} className="text-white" />
+              </div>
+              <div className="flex-1">
+                <h4 className="text-white font-bold text-sm">{toastMessage.title || "Natango OS"}</h4>
+                <p className="text-gray-300 text-xs mt-1 line-clamp-2">{toastMessage.body || toastMessage}</p>
+              </div>
+              <button onClick={() => setToastMessage(null)} className="p-1 text-gray-400 hover:text-white">
+                <X size={16} />
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -691,7 +810,57 @@ export default function App() {
                 {formData.role !== 'Public' && (
                   <div className="flex justify-center mb-10"><input type="file" id="photo-upload" accept="image/*" className="hidden" onChange={handlePhotoUpload} /><div onClick={() => document.getElementById('photo-upload').click()} className="w-28 h-28 rounded-full flex items-center justify-center cursor-pointer border-4 border-gray-200 dark:border-[#202c33] bg-gray-100 dark:bg-[#111b21] overflow-hidden shadow-inner">{formData.photo ? <img src={formData.photo} className="w-full h-full object-cover" /> : <Camera size={36} className="text-gray-400" />}</div></div>
                 )}
-                <form onSubmit={(e) => { e.preventDefault(); if (formData.name) { setCurrentUser(formData); setChats(generateInitialChats(formData.role, formData.name)); setActiveChatId(formData.role === 'DG' ? 'hub' : 'terrain'); } }} className="space-y-6">
+                <form onSubmit={async (e) => {
+                  e.preventDefault();
+
+                  // 1. Afficher un indicateur de chargement
+                  showToast("Vérification des accès en cours...");
+
+                  try {
+                    // 2. Interroger la Liste Blanche sur le serveur
+                    const response = await fetch('https://natango-os.onrender.com/api/auth/login', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        phone: formData.phone,
+                        pin: formData.pinCode,
+                        role: formData.role
+                      })
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success) {
+                      // 3. SUCCÈS : On connecte l'utilisateur avec ses vraies infos de la BDD
+                      setToastMessage(null);
+                      setCurrentUser(result.user);
+                      localStorage.setItem('natangoUser', JSON.stringify(result.user));
+                      setChats(generateInitialChats(result.user.role, result.user.name));
+                      setActiveChatId(result.user.role === 'DG' ? 'hub' : 'terrain');
+
+                      // 🚀 NOUVEAU : LOGIQUE D'ONBOARDING
+                      const hasSeenTutorial = localStorage.getItem('natangoOnboarding');
+                      if (!hasSeenTutorial && result.user.role === 'Agent') {
+                        setShowOnboarding(true); // Lance le tutoriel pour les nouveaux agents
+                      }
+
+                      // NOUVEAU : On prépare l'arrivée de l'Onboarding IA
+                      if (result.onboardingMessage) {
+                        setOnboardingText(result.onboardingMessage);
+                      } else {
+                        setOnboardingText(`Bonjour ${result.user.name}. Je suis Natango AI, votre assistant opérationnel. Initialisation de votre espace de travail en cours...`);
+                      }
+                      setStep(4);
+                    } else {
+                      // 4. ÉCHEC : On bloque l'accès
+                      setToastMessage(null);
+                      alert(`⛔ ${result.message}`);
+                    }
+                  } catch (error) {
+                    setToastMessage(null);
+                    alert("Erreur réseau. Impossible de vérifier les accès.");
+                  }
+                }} className="space-y-6">
                   <div className="border-b-2 border-gray-300 dark:border-[#202c33] focus-within:border-[#0056FF] dark:focus-within:border-[#00a884] pb-2"><input type="text" placeholder="Prénom et Nom" className="w-full bg-transparent font-bold text-xl outline-none dark:text-[#e9edef] placeholder:text-gray-400" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} required /></div>
                   <div><p className="text-xs text-gray-500 uppercase font-bold mb-4 tracking-wider">Sélectionnez votre rôle</p>
                     <div className="grid grid-cols-3 gap-2">
@@ -704,11 +873,304 @@ export default function App() {
                 </form>
               </div>
             )}
+            {step === 4 && (
+              <div className="absolute inset-0 bg-black z-[200] flex flex-col items-center justify-center p-6 animate-in fade-in duration-700">
+                <div className="w-full max-w-sm flex items-center justify-center mb-8">
+                  <div className="w-16 h-16 bg-[#111b21] rounded-2xl flex items-center justify-center animate-pulse border border-green-500/30 shadow-[0_0_30px_rgba(0,168,132,0.2)]">
+                    <img src="/logo.png" alt="AI" className="w-10 h-10 object-contain grayscale" />
+                  </div>
+                </div>
+
+                <div className="w-full bg-[#0b141a] border border-gray-800 rounded-3xl p-6 shadow-2xl relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#00a884] to-transparent opacity-50"></div>
+                  <p className="font-mono text-[13px] text-[#00a884] leading-loose whitespace-pre-wrap">
+                    <span className="opacity-50 select-none mr-2">{'>'}</span>{onboardingText}
+                    <span className="inline-block w-2 h-4 ml-1 bg-[#00a884] animate-pulse"></span>
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => {
+                    // C'est ici qu'on désactive l'écran de chargement pour passer dans l'app !
+                    const userRole = currentUser?.role || formData.role;
+                    setActiveChatId(userRole === 'DG' ? 'hub' : 'terrain');
+                    setChats(generateInitialChats(userRole, currentUser?.name || formData.name));
+                    setStep(5); // 5 = App principale (car dans App.jsx, !currentUser lance l'accueil)
+                    // (Le vrai déclencheur de l'app est currentUser != null, donc on laisse passer)
+                  }}
+                  className="w-full max-w-sm mt-12 py-5 bg-[#00a884] text-black rounded-full font-black text-lg shadow-[0_10px_40px_rgba(0,168,132,0.3)] hover:scale-[1.02] active:scale-95 transition-all">
+                  Démarrer ma journée
+                </button>
+              </div>
+            )}
           </div>
         </div>
       ) : (
         <div className={`w-full h-full bg-white dark:bg-[#0b141a] flex flex-col md:flex-row relative overflow-hidden border-x border-gray-200 dark:border-black shadow-2xl transition-all duration-500 ease-in-out ${activeOverlay === 'dashboard' ? 'max-w-6xl' : 'max-w-md md:max-w-5xl'}`}>
-          {toastMessage && (<div className="absolute top-12 left-1/2 -translate-x-1/2 bg-gray-900 dark:bg-[#202c33] text-white px-5 py-2.5 rounded-full text-[13px] font-medium z-[200] animate-in fade-in shadow-lg flex items-center gap-2"><CheckCircle2 size={16} className="text-green-400 dark:text-[#00a884]" /> {toastMessage}</div>)}
+          {/* 🍏 NOTIFICATION STYLE APPLE (S'affiche par-dessus tout) */}
+          {toastMessage && (
+            <div className="absolute top-4 left-4 md:left-auto md:right-4 md:w-80 z-[300] bg-[#111b21]/90 backdrop-blur-xl border border-white/10 p-4 rounded-3xl shadow-2xl flex items-start gap-4 animate-in slide-in-from-top fade-in duration-300">
+              <div className="w-10 h-10 rounded-2xl bg-[#0056FF] flex items-center justify-center flex-shrink-0">
+                <Bell size={20} className="text-white" />
+              </div>
+              <div className="flex-1">
+                <h4 className="text-white font-bold text-sm">{toastMessage.title || "Natango OS"}</h4>
+                <p className="text-gray-300 text-xs mt-1 line-clamp-2">{toastMessage.body || toastMessage}</p>
+              </div>
+              <button onClick={() => setToastMessage(null)} className="p-1 text-gray-400 hover:text-white">
+                <X size={16} />
+              </button>
+            </div>
+          )}
+
+          {/* 📞 ÉCRAN D'APPEL D'URGENCE (Si l'agent ignore la mission > 3 mins) */}
+          {activeOverlay === 'incoming_call_screen' && (
+            <div className="absolute inset-0 z-[400] bg-gray-900 flex flex-col items-center justify-center py-12 px-6 animate-in fade-in">
+
+              {/* SI L'AGENT A CLIQUÉ SUR DÉCLINER : On affiche le formulaire de motif */}
+              {isDeclining ? (
+                <div className="w-full max-w-sm bg-white dark:bg-[#111b21] rounded-[30px] p-6 shadow-2xl animate-in zoom-in">
+                  <h3 className="text-xl font-black text-gray-900 dark:text-white mb-2">Motif du refus</h3>
+                  <p className="text-sm text-gray-500 mb-4">Veuillez justifier pourquoi vous ne pouvez pas intervenir.</p>
+
+                  <textarea
+                    className="w-full bg-gray-100 dark:bg-[#202c33] border-none rounded-xl p-4 text-gray-900 dark:text-white mb-4 h-32 focus:ring-2 focus:ring-red-500"
+                    placeholder="Ex: Véhicule en panne, Fin de service..."
+                    value={declineReason}
+                    onChange={(e) => setDeclineReason(e.target.value)}
+                  />
+
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setIsDeclining(false)}
+                      className="flex-1 py-3 font-bold text-gray-500 bg-gray-200 dark:bg-white/5 rounded-xl">
+                      Annuler
+                    </button>
+                    <button
+                      onClick={async () => {
+                        if (declineReason.trim().length < 3) {
+                          alert("Veuillez entrer un motif valide.");
+                          return;
+                        }
+                        // Envoi au serveur
+                        await fetch('https://natango-os.onrender.com/api/decline-mission', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            incidentId: currentIncidentId,
+                            agentPhone: currentUser.phone || currentUser.phone_number,
+                            agentName: currentUser.name,
+                            reason: declineReason
+                          })
+                        });
+                        // Nettoyage et fermeture
+                        setIsDeclining(false);
+                        setDeclineReason('');
+                        setActiveOverlay(null);
+                      }}
+                      className="flex-1 py-3 font-bold text-white bg-red-600 hover:bg-red-500 rounded-xl shadow-lg">
+                      Confirmer le refus
+                    </button>
+                  </div>
+                </div>
+              ) : (
+
+                // ÉCRAN D'ALARM CLASSIQUE (Avant de cliquer)
+                <div className="flex flex-col items-center justify-between h-full w-full">
+                  <div className="flex flex-col items-center mt-10">
+                    <div className="w-24 h-24 bg-red-500/20 rounded-full flex items-center justify-center mb-6 animate-pulse">
+                      <div className="w-20 h-20 bg-red-500 rounded-full flex items-center justify-center shadow-[0_0_50px_rgba(239,68,68,0.8)]">
+                        <AlertTriangle size={40} className="text-white" />
+                      </div>
+                    </div>
+                    <h2 className="text-white text-3xl font-black tracking-wider uppercase">Urgence Terrain</h2>
+                    <p className="text-gray-400 font-bold mt-2 text-lg">Mission en attente de réponse</p>
+                  </div>
+
+                  <div className="flex w-full justify-around mb-10 gap-6">
+                    <button
+                      onClick={() => setIsDeclining(true)}
+                      className="flex-1 bg-gray-800 hover:bg-red-900 text-white p-6 rounded-[30px] flex flex-col items-center gap-2 transition-colors border border-gray-700">
+                      <PhoneOff size={32} />
+                      <span className="font-bold">Décliner</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setActiveOverlay(null);
+                        setActiveOverlay('route'); // Ouvre la route GPS
+                      }}
+                      className="flex-1 bg-green-500 hover:bg-green-400 text-white p-6 rounded-[30px] flex flex-col items-center gap-2 shadow-[0_0_30px_rgba(34,197,94,0.4)] transition-all transform hover:scale-105 animate-bounce">
+                      <PhoneCall size={32} />
+                      <span className="font-bold">Intervenir</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ⏰ ÉCRAN CONTRÔLE RH (S'affiche à 9h00 si pas de check-in) */}
+          {activeOverlay === 'hr_attendance_prompt_screen' && (
+            <div className="absolute inset-0 z-[450] bg-gray-900/95 backdrop-blur-md flex flex-col items-center justify-center py-12 px-6 animate-in zoom-in duration-300">
+
+              <div className="w-full max-w-sm bg-white dark:bg-[#111b21] rounded-[40px] p-8 shadow-2xl flex flex-col items-center border-4 border-orange-500/30">
+
+                <div className="w-20 h-20 bg-orange-100 dark:bg-orange-500/20 rounded-full flex items-center justify-center mb-6">
+                  <Clock size={40} className="text-orange-500" />
+                </div>
+
+                <h2 className="text-2xl font-black text-gray-900 dark:text-white text-center mb-2">Contrôle de Présence</h2>
+                <p className="text-gray-500 text-center font-medium mb-8">
+                  Il est passé 9h00 et aucun check-in n'a été détecté pour votre profil. Venez-vous travailler aujourd'hui ?
+                </p>
+
+                {/* CHOIX DU STATUT */}
+                {!attendanceStatus ? (
+                  <div className="w-full space-y-4 flex flex-col">
+                    <button
+                      onClick={() => setAttendanceStatus('retard')}
+                      className="w-full py-4 bg-orange-50 text-orange-600 dark:bg-orange-500/10 dark:text-orange-400 font-bold rounded-2xl border border-orange-200 dark:border-orange-500/20 hover:scale-105 transition-transform">
+                      Oui, je serai en retard
+                    </button>
+                    <button
+                      onClick={() => setAttendanceStatus('absent')}
+                      className="w-full py-4 bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400 font-bold rounded-2xl border border-red-200 dark:border-red-500/20 hover:scale-105 transition-transform">
+                      Non, je suis absent
+                    </button>
+                  </div>
+                ) : (
+                  /* SAISIE DE LA JUSTIFICATION */
+                  <div className="w-full flex flex-col animate-in fade-in">
+                    <h3 className="font-bold text-gray-700 dark:text-gray-300 mb-3 text-sm uppercase tracking-wider">
+                      Justification ({attendanceStatus})
+                    </h3>
+                    <textarea
+                      className="w-full bg-gray-50 dark:bg-[#202c33] border border-gray-200 dark:border-white/10 rounded-2xl p-4 text-gray-900 dark:text-white h-32 focus:ring-2 focus:ring-[#0056FF] outline-none resize-none mb-6"
+                      placeholder={attendanceStatus === 'retard' ? "Ex: Embouteillages, problème de transport..." : "Ex: Maladie, urgence familiale..."}
+                      value={attendanceReason}
+                      onChange={(e) => setAttendanceReason(e.target.value)}
+                    />
+
+                    <div className="flex gap-3">
+                      <button
+                        onClick={() => setAttendanceStatus(null)}
+                        className="flex-1 py-4 font-bold text-gray-500 bg-gray-100 dark:bg-white/5 rounded-2xl">
+                        Retour
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (attendanceReason.trim().length < 5) {
+                            alert("Veuillez fournir un motif détaillé.");
+                            return;
+                          }
+
+                          // Envoi au serveur
+                          await fetch('https://natango-os.onrender.com/api/hr-attendance', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              phone: currentUser.phone || currentUser.phone_number,
+                              name: currentUser.name,
+                              isComing: attendanceStatus === 'retard',
+                              reason: attendanceReason
+                            })
+                          });
+
+                          // Nettoyage et fermeture
+                          setAttendanceStatus(null);
+                          setAttendanceReason('');
+                          setActiveOverlay(null);
+                          setToastMessage({ title: "RH Natango", body: "Votre justification a été transmise à la Direction." });
+                        }}
+                        className="flex-[2] py-4 font-black text-white bg-[#0056FF] hover:bg-blue-600 rounded-2xl shadow-[0_10px_20px_rgba(0,86,255,0.3)]">
+                        Transmettre
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ===================================================== */}
+          {/* 🚀 ONBOARDING (TUTORIEL AGENT) */}
+          {/* ===================================================== */}
+          {showOnboarding && currentUser && (
+            <div className="absolute inset-0 z-[200] bg-[#0056FF] dark:bg-[#00a884] flex flex-col items-center justify-center p-6 text-white animate-in slide-in-from-bottom">
+
+              <div className="flex-1 flex flex-col items-center justify-center w-full max-w-sm text-center space-y-8">
+
+                {/* ÉCRAN 1 : LA MISSION */}
+                {onboardingStep === 1 && (
+                  <div className="animate-in fade-in zoom-in duration-500 flex flex-col items-center">
+                    <div className="w-24 h-24 bg-white/20 rounded-full flex items-center justify-center mb-6">
+                      <Target size={48} className="text-white" />
+                    </div>
+                    <h2 className="text-3xl font-black mb-4">Bienvenue, {currentUser.name.split(' ')[0]}</h2>
+                    <p className="text-lg text-white/80 font-medium">
+                      Vous êtes maintenant connecté(e) au réseau Natango. Votre position GPS est sécurisée et le système est prêt.
+                    </p>
+                  </div>
+                )}
+
+                {/* ÉCRAN 2 : LE RADAR */}
+                {onboardingStep === 2 && (
+                  <div className="animate-in fade-in zoom-in duration-500 flex flex-col items-center">
+                    <div className="w-24 h-24 bg-white/20 rounded-full flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(255,255,255,0.3)]">
+                      <Navigation size={48} className="text-white" />
+                    </div>
+                    <h2 className="text-3xl font-black mb-4">Radar Tactique</h2>
+                    <p className="text-lg text-white/80 font-medium">
+                      Ne cherchez plus. Quand une mission vous est assignée, ouvrez le Radar. Suivez la flèche pour trouver la zone exacte.
+                    </p>
+                  </div>
+                )}
+
+                {/* ÉCRAN 3 : L'IA GEMINI */}
+                {onboardingStep === 3 && (
+                  <div className="animate-in fade-in zoom-in duration-500 flex flex-col items-center">
+                    <div className="w-24 h-24 bg-white/20 rounded-full flex items-center justify-center mb-6">
+                      <Camera size={48} className="text-white" />
+                    </div>
+                    <h2 className="text-3xl font-black mb-4">Validation IA</h2>
+                    <p className="text-lg text-white/80 font-medium">
+                      Prenez des photos nettes après votre nettoyage. L'Intelligence Artificielle de Natango vérifiera la propreté avant de clôturer la mission.
+                    </p>
+                  </div>
+                )}
+
+              </div>
+
+              {/* BOUTONS DE NAVIGATION */}
+              <div className="w-full max-w-sm pb-8 flex flex-col gap-4">
+                {/* Indicateurs de progression (Les 3 petits points) */}
+                <div className="flex justify-center gap-2 mb-4">
+                  {[1, 2, 3].map(step => (
+                    <div key={step} className={`h-2 rounded-full transition-all duration-300 ${onboardingStep === step ? 'w-8 bg-white' : 'w-2 bg-white/30'}`} />
+                  ))}
+                </div>
+
+                <button
+                  onClick={() => {
+                    if (onboardingStep < 3) {
+                      setOnboardingStep(onboardingStep + 1);
+                    } else {
+                      // FIN DU TUTO : On sauvegarde en mémoire pour ne plus jamais le montrer
+                      localStorage.setItem('natangoOnboarding', 'true');
+                      setShowOnboarding(false);
+                    }
+                  }}
+                  className="w-full py-4 bg-white text-[#0056FF] dark:text-[#00a884] rounded-2xl font-black text-lg shadow-xl active:scale-95 transition-all flex items-center justify-center gap-2">
+                  {onboardingStep === 3 ? (
+                    <>Démarrer ma mission <CheckCircle2 size={20} /></>
+                  ) : (
+                    <>Continuer <ChevronRight size={20} /></>
+                  )}
+                </button>
+              </div>
+
+            </div>
+          )}
 
           {/* ============ DESKTOP SIDEBAR ============ */}
           <div className="hidden md:flex md:w-80 md:shrink-0 flex-col h-full border-r border-gray-100 dark:border-[#202c33] bg-white dark:bg-[#0b141a]">
@@ -817,6 +1279,15 @@ export default function App() {
                       </>
                     )}
                   </div>
+                  <div className="p-4 pt-0">
+                    {/* Bouton de déconnexion */}
+                    <button onClick={() => {
+                      localStorage.removeItem('natangoUser');
+                      window.location.href = '/';
+                    }} className="w-full mt-4 py-4 bg-red-50 dark:bg-red-900/20 text-red-600 font-black rounded-3xl active:scale-95 border border-red-100 dark:border-red-900/30">
+                      Se déconnecter
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -907,12 +1378,64 @@ export default function App() {
                     switch (msg.type) {
                       case 'system': return <div key={msg.id} className="flex justify-center my-3"><span className="text-[10px] font-bold uppercase tracking-widest bg-gray-100 dark:bg-[#111b21] text-gray-400 px-4 py-1.5 rounded-full">{msg.content}</span></div>;
                       case 'infographic': return (
-                        <div key={msg.id} className="flex justify-start w-full animate-in zoom-in-95">
-                          <div className="bg-white dark:bg-[#202c33] w-full rounded-3xl p-5 shadow-xl border border-purple-100 dark:border-purple-900/30">
-                            <div className="flex justify-between items-center mb-5 border-b border-gray-100 dark:border-gray-700 pb-3"><div className="flex items-center gap-3"><BarChart size={22} className="text-purple-500" /><h3 className="font-extrabold dark:text-white text-lg">{msg.content.title}</h3></div><Download size={18} className="text-gray-400" /></div>
-                            <div className="grid grid-cols-1 gap-3 mb-5">{msg.content.metrics?.map((m, i) => (<div key={i} className="bg-purple-50/50 dark:bg-purple-900/10 p-4 rounded-2xl flex justify-between items-center"><div><p className="text-[10px] uppercase font-black text-purple-400 tracking-widest">{m.label}</p><p className="text-xl font-black dark:text-white">{m.value}</p></div><p className="text-[11px] font-bold text-purple-600 bg-purple-100 dark:bg-purple-900/30 px-2 py-0.5 rounded-lg">{m.trend}</p></div>))}</div>
-                            <div className="bg-gray-900 dark:bg-black p-4 rounded-2xl"><p className="text-[10px] font-black text-gray-400 uppercase mb-3">Composition</p><div className="flex w-full h-7 rounded-xl overflow-hidden"><div style={{ width: '50%' }} className="bg-blue-500 flex items-center justify-center text-[9px] text-white font-black">50%</div><div style={{ width: '30%' }} className="bg-emerald-500 flex items-center justify-center text-[9px] text-white font-black">30%</div><div style={{ width: '20%' }} className="bg-orange-500 flex items-center justify-center text-[9px] text-white font-black">20%</div></div></div>
+                        <div key={msg.id} className="w-full space-y-4 animate-in zoom-in-95">
+                          <div className="flex items-center gap-3 bg-blue-50 dark:bg-white/5 p-4 rounded-full border border-blue-100 dark:border-white/5">
+                            <BarChart size={20} className="text-[#0056FF]" />
+                            <p className="font-bold text-sm text-[#0056FF] dark:text-white">Visuel Marketing Généré</p>
                           </div>
+
+                          {/* INJECTION DU SVG DYNAMIQUE DE GEMINI */}
+                          <div
+                            className="w-full rounded-3xl overflow-hidden border-2 border-gray-100 dark:border-white/5 shadow-2xl bg-[#111b21]"
+                            dangerouslySetInnerHTML={{ __html: msg.content }}
+                          />
+
+                          <button
+                            onClick={() => {
+                              // Petite fonction pour télécharger le SVG
+                              const blob = new Blob([msg.content], { type: 'image/svg+xml' });
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = url;
+                              a.download = `natango-infographie-${Date.now()}.svg`;
+                              document.body.appendChild(a);
+                              a.click();
+                              document.body.removeChild(a);
+                            }}
+                            className="flex items-center gap-2 text-xs font-bold text-gray-500 hover:text-[#0056FF] p-2">
+                            <Download size={14} /> Télécharger le visuel (SVG)
+                          </button>
+                        </div>
+                      );
+                      case 'report': return (
+                        <div key={msg.id} className="w-full space-y-4 animate-in zoom-in-95">
+                          <div className="flex items-center gap-3 bg-gray-100 dark:bg-[#202c33] p-4 rounded-full border border-gray-200 dark:border-white/5">
+                            <FileText className="text-gray-700 dark:text-gray-300" />
+                            <p className="font-bold text-sm text-gray-800 dark:text-white">Rapport Opérationnel Journalier</p>
+                          </div>
+
+                          {/* La feuille de papier virtuelle */}
+                          <div className="w-full bg-white dark:bg-[#111b21] p-6 rounded-3xl shadow-xl border border-gray-200 dark:border-white/10 max-h-[60vh] overflow-y-auto">
+                            <pre className="whitespace-pre-wrap font-sans text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
+                              {msg.content}
+                            </pre>
+                          </div>
+
+                          {/* Bouton pour archiver/télécharger */}
+                          <button
+                            onClick={() => {
+                              const blob = new Blob([msg.content], { type: 'text/markdown;charset=utf-8' });
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = url;
+                              a.download = `Natango_Rapport_Journalier_${new Date().toLocaleDateString('fr-FR').replace(/\//g, '-')}.md`;
+                              document.body.appendChild(a);
+                              a.click();
+                              document.body.removeChild(a);
+                            }}
+                            className="flex items-center gap-2 text-xs font-bold text-gray-500 hover:text-black dark:hover:text-white p-2 transition-colors">
+                            <Download size={14} /> Télécharger l'archive (.md)
+                          </button>
                         </div>
                       );
                       case 'action': return (
@@ -922,10 +1445,25 @@ export default function App() {
                           {resolvedTasks.includes(msg.taskId) ? (
                             <div className="bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-400 py-3 rounded-2xl text-sm font-bold flex justify-center items-center gap-2"><CheckCircle2 size={18} /> Mission accomplie</div>
                           ) : (
-                            <div className="flex gap-2.5">
-                              <button onClick={() => { setCurrentTaskId(msg.taskId); setActiveOverlay('proof_photo'); }} className="flex-1 bg-[#0056FF] dark:bg-[#00a884] text-white dark:text-[#111b21] text-[14px] font-bold py-3 rounded-2xl active:scale-95 shadow-lg">Terminer</button>
-                              <button onClick={() => setActiveOverlay('route')} className="flex-1 border-2 border-gray-200 dark:border-[#2a3942] text-gray-700 dark:text-[#e9edef] text-[14px] font-bold py-3 rounded-2xl active:scale-95">Trajet</button>
-                            </div>
+                            <button onClick={() => {
+                              setCurrentTaskId(msg.taskId);
+
+                              // Simulons le fait que "currentTaskData" est rempli par le backend. 
+                              // On le charge avec les infos du msg pour que l'overlay s'affiche bien
+                              setCurrentTaskData({
+                                id: msg.taskId,
+                                type: msg.content.includes('URGENCE') ? 'Alerte Critique' : 'Signalement',
+                                urgency: msg.content.includes('URGENCE') ? 'Critical' : 'High',
+                                aiAnalysisBefore: {
+                                  description_ia: msg.content
+                                }
+                              });
+
+                              setActiveOverlay('task_detail');
+                            }}
+                              className="w-full bg-[#0056FF] dark:bg-[#00a884] text-white dark:text-[#111b21] text-[14px] font-bold py-3 rounded-2xl active:scale-95 shadow-lg flex items-center justify-center gap-2">
+                              Accepter et Revoir <ChevronRight size={18} />
+                            </button>
                           )}
                           <span className="text-[10px] text-gray-500 float-right mt-1.5">{msg.time}</span>
                         </div></div>
@@ -1096,8 +1634,8 @@ export default function App() {
                       <div className="bg-white dark:bg-[#111b21] rounded-3xl p-5 border border-gray-100 dark:border-white/5">
                         <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4">Affectations du jour</h4>
                         <div className="space-y-3">
-                          {['Moussa (Snack Nord)', 'Ibrahim (Parking Est)', 'Koffi (Entrée Sud)'].map((agent, idx) => (
-                            <div key={idx} className="flex justify-between items-center p-3 bg-gray-50 dark:bg-[#202c33] rounded-2xl"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-[#0056FF]"><User size={18} /></div><p className="font-bold text-sm dark:text-white">{agent}</p></div><CheckCircle2 size={18} className="text-green-500" /></div>
+                          {[{ name: 'Moussa (Snack Nord)', phone: '771234567' }, { name: 'Ibrahim (Parking Est)', phone: '781234567' }, { name: 'Koffi (Entrée Sud)', phone: '761234567' }].map((agent, idx) => (
+                            <div key={idx} onClick={() => openAgentDetails(agent)} className="cursor-pointer hover:scale-[1.02] transition-transform flex justify-between items-center p-3 bg-gray-50 dark:bg-[#202c33] rounded-2xl"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-[#0056FF]"><User size={18} /></div><p className="font-bold text-sm dark:text-white">{agent.name}</p></div><CheckCircle2 size={18} className="text-green-500" /></div>
                           ))}
                         </div>
                         <div className="mt-4 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 p-4 rounded-2xl text-sm font-bold flex items-center gap-2"><CheckCircle2 size={18} /> Zones couvertes - Prêts pour la journée</div>
@@ -1122,6 +1660,71 @@ export default function App() {
                         <div className="flex justify-between items-center mb-6"><h4 className="text-xs font-black text-gray-400 uppercase tracking-widest">Taux de saturation global</h4><span className="bg-blue-100 text-[#0056FF] px-3 py-1 rounded-full text-xs font-bold">{liveData.time}</span></div>
                         <div className="relative w-full h-4 bg-gray-100 dark:bg-[#202c33] rounded-full overflow-hidden mb-2"><div className={`absolute top-0 left-0 h-full rounded-full transition-all duration-500 ${liveData.fillRate > 80 ? 'bg-red-500' : liveData.fillRate > 50 ? 'bg-orange-500' : 'bg-green-500'}`} style={{ width: `${liveData.fillRate}%` }}></div></div>
                         <p className="text-right text-sm font-black dark:text-white">{liveData.fillRate}%</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ===================================================== */}
+            {/* DOSSIER RH AGENT (Vue Superviseur / DG) */}
+            {/* ===================================================== */}
+            {activeOverlay === 'agent_details' && selectedAgentStats && (
+              <div className="absolute inset-0 z-[150] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+                <div className="w-full max-w-md bg-white dark:bg-[#111b21] rounded-[40px] shadow-2xl flex flex-col overflow-hidden border border-gray-100 dark:border-white/10">
+
+                  {/* Header */}
+                  <div className="flex justify-between items-center px-6 py-5 border-b border-gray-100 dark:border-white/5 bg-gray-50 dark:bg-[#202c33]">
+                    <h3 className="font-black text-xl dark:text-white flex items-center gap-3">
+                      <User size={22} className="text-[#0056FF]" /> Dossier Agent
+                    </h3>
+                    <button onClick={() => setActiveOverlay(null)} className="bg-gray-200 dark:bg-white/10 rounded-full p-2">
+                      <X size={20} className="text-gray-500 dark:text-gray-300" />
+                    </button>
+                  </div>
+
+                  <div className="p-8 flex flex-col items-center">
+                    {/* Photo de profil par défaut */}
+                    <div className="w-20 h-20 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mb-4">
+                      <span className="text-3xl font-black text-[#0056FF]">{selectedAgentStats.name.charAt(0)}</span>
+                    </div>
+                    <h2 className="text-2xl font-black dark:text-white mb-1">{selectedAgentStats.name}</h2>
+                    <p className="text-gray-500 font-bold mb-6">{selectedAgentStats.phone || selectedAgentStats.phone_number}</p>
+
+                    {selectedAgentStats.loading ? (
+                      <Loader2 className="animate-spin text-[#0056FF] my-8" size={32} />
+                    ) : (
+                      <div className="w-full space-y-4">
+
+                        {/* 🟢 STATUT RH DU JOUR */}
+                        <div className="flex items-center justify-between p-5 rounded-3xl border border-gray-100 dark:border-white/5 bg-gray-50 dark:bg-white/5">
+                          <span className="font-bold text-gray-500">Statut du jour</span>
+                          <div className="flex items-center gap-2 font-black text-lg">
+                            {selectedAgentStats.status === 'Présent' && <><CheckCircle2 className="text-[#00a884]" /> <span className="text-[#00a884]">Présent</span></>}
+                            {selectedAgentStats.status === 'Retard' && <><Clock className="text-orange-500" /> <span className="text-orange-500">Retard</span></>}
+                            {selectedAgentStats.status === 'Absent' && <><XCircle className="text-red-500" /> <span className="text-red-500">Absent</span></>}
+                          </div>
+                        </div>
+
+                        {selectedAgentStats.checkinTime && (
+                          <p className="text-center text-xs font-bold text-gray-400">
+                            Prise de poste validée par IA à : {selectedAgentStats.checkinTime}
+                          </p>
+                        )}
+
+                        {/* 📊 MÉTRIQUES & XP */}
+                        <div className="grid grid-cols-2 gap-4 mt-4">
+                          <div className="bg-blue-50 dark:bg-[#0056FF]/10 p-5 rounded-3xl border border-blue-100 dark:border-[#0056FF]/20 text-center shadow-inner">
+                            <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1">Missions</p>
+                            <p className="text-3xl font-black text-[#0056FF]">{selectedAgentStats.missionsCount}</p>
+                          </div>
+                          <div className="bg-purple-50 dark:bg-purple-900/10 p-5 rounded-3xl border border-purple-100 dark:border-purple-900/20 text-center shadow-inner">
+                            <p className="text-[10px] font-black text-purple-500 uppercase tracking-widest mb-1">Score XP</p>
+                            <p className="text-3xl font-black text-purple-600">{selectedAgentStats.xp}</p>
+                          </div>
+                        </div>
+
                       </div>
                     )}
                   </div>

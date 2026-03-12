@@ -237,6 +237,35 @@ function pushEvent(targetRole, chatId, content, type = 'system', additionalProps
 }
 
 // =====================================================
+// AUTHENTIFICATION (LISTE BLANCHE SUPABASE)
+// =====================================================
+app.post('/api/auth/login', async (req, res) => {
+    const { phone, pin, role } = req.body;
+
+    try {
+        // Vérifie si le numéro, le rôle et le code PIN correspondent exactement
+        const { data: user, error } = await supabase
+            .from('authorized_users')
+            .select('*')
+            .eq('phone_number', phone)
+            .eq('pin_code', pin)
+            .eq('role', role)
+            .single();
+
+        if (user) {
+            // Accès autorisé
+            res.json({ success: true, user: { name: user.name, phone: user.phone_number, role: user.role } });
+        } else {
+            // Accès refusé (mauvais numéro, mauvais rôle ou mauvais code)
+            res.json({ success: false, message: "Accès refusé. Numéro non autorisé ou code incorrect." });
+        }
+    } catch (e) {
+        console.error("Erreur de connexion:", e.message);
+        res.status(500).json({ success: false, message: "Erreur lors de la vérification des accès." });
+    }
+});
+
+// =====================================================
 // COMMUNICATION INTER-APP & DÉPLOIEMENT
 // =====================================================
 
@@ -347,6 +376,31 @@ Réponds en JSON strict :
 
                     // Notifier l'agent assigné
                     pushEvent('Agent', assignedAgent.phone_number, `📍 NOUVELLE MISSION : ${type} signalé par ${name} à "${locationDescription || zone}". Rendez-vous aux coordonnées GPS.`, 'mission_assigned', { incidentId: incident.incident_id });
+
+                    // --- ⏰ RÈGLE DES 3 MINUTES (ESCALADE) ---
+                    setTimeout(async () => {
+                        try {
+                            // On vérifie si la mission est toujours bloquée sur "assigned"
+                            const { data: checkInc } = await supabase.from('incidents').select('status').eq('incident_id', incident.incident_id).single();
+
+                            if (checkInc && checkInc.status === 'assigned') {
+                                // 🚨 ÉTAPE 1 : Déclencher l'appel d'urgence style WhatsApp sur le tel de l'agent
+                                pushEvent('Agent', assignedAgent.phone_number, `URGENCE : Mission #${incident.incident_id} en attente !`, 'incoming_call', { incidentId: incident.incident_id });
+                                console.log(`[ESCALADE] Appel envoyé à ${assignedAgent.name}`);
+
+                                // 🚨 ÉTAPE 2 : On lui donne 45 secondes pour décrocher. Sinon, on réassigne.
+                                setTimeout(async () => {
+                                    const { data: reCheck } = await supabase.from('incidents').select('status').eq('incident_id', incident.incident_id).single();
+                                    if (reCheck && reCheck.status === 'assigned') {
+                                        // Libérer l'agent actuel et chercher le plan B
+                                        await supabase.from('incidents').update({ status: 'pending', assigned_agent_phone: null, assigned_agent_name: null }).eq('incident_id', incident.incident_id);
+                                        pushEvent('DG', 'terrain', `⚠️ Escalade : ${assignedAgent.name} n'a pas répondu à l'appel. La mission est réassignée au prochain disponible.`, 'system');
+                                        // Natango repassera la mission au prochain agent dispo au prochain battement.
+                                    }
+                                }, 45000); // 45 secondes pour décrocher
+                            }
+                        } catch (e) { console.error("Erreur escalade:", e.message); }
+                    }, 180000); // 180000 ms = 3 minutes exactes
                 }
             }
         } catch (e) {
@@ -473,6 +527,30 @@ app.post('/api/assign-mission', async (req, res) => {
         res.json({ success: true });
     } catch (e) {
         console.error("Erreur assign-mission:", e.message);
+        res.status(500).json({ success: false });
+    }
+});
+
+// =====================================================
+// REFUS DE MISSION AVEC JUSTIFICATION
+// =====================================================
+app.post('/api/decline-mission', async (req, res) => {
+    const { incidentId, agentPhone, agentName, reason } = req.body;
+
+    try {
+        // 1. Remettre la mission dans le pool public (pending) pour le prochain agent dispo
+        await supabase.from('incidents').update({
+            status: 'pending',
+            assigned_agent_phone: null,
+            assigned_agent_name: null
+        }).eq('incident_id', incidentId);
+
+        // 2. Alerter immédiatement la direction avec le motif exact
+        pushEvent('DG', 'terrain', `⚠️ REFUS : ${agentName || 'Un agent'} a décliné la mission #${incidentId}. Motif : "${reason}". La mission est en cours de réassignation automatique.`, 'system');
+
+        res.json({ success: true });
+    } catch (e) {
+        console.error("Erreur decline-mission:", e.message);
         res.status(500).json({ success: false });
     }
 });
@@ -612,38 +690,40 @@ app.post('/api/heartbeat', async (req, res) => {
 // =====================================================
 
 async function buildDynamicContext(role, targetAi) {
-    const timeStr = new Date().toLocaleTimeString();
+    const timeStr = new Date().toLocaleTimeString('fr-FR');
+    const dateStr = new Date().toLocaleDateString('fr-FR');
 
-    // 1. Récupérer les agents réellement en ligne (RAG Live)
+    // 1. Récupérer les agents réellement en ligne avec leur dernière position et heure
     const { data: onlineAgents } = await supabase
         .from('users')
-        .select('name, last_lat, last_lng')
+        .select('name, last_lat, last_lng, last_seen')
         .eq('is_online', true)
-        .gt('last_seen', new Date(Date.now() - 300000).toISOString()); // Vu il y a moins de 5 min
+        .gt('last_seen', new Date(Date.now() - 300000).toISOString()); // Actifs il y a < 5 min
 
-    // 2. Récupérer les incidents ouverts
+    // 2. Récupérer les incidents ouverts avec la vraie description et le citoyen
     const { data: openIncidents } = await supabase
         .from('incidents')
-        .select('type, priority, description')
+        .select('type, priority, description, citizen_name, timestamp_reported, location_description')
         .eq('status', 'pending');
 
-    const agentsStr = onlineAgents?.map(a => `- ${a.name} (Position: ${a.last_lat.toFixed(4)}, ${a.last_lng.toFixed(4)})`).join('\n') || "Aucun agent en ligne.";
-    const incidentsStr = openIncidents?.map(i => `- [${i.priority}] ${i.type}: ${i.description}`).join('\n') || "Aucun incident en attente.";
+    const agentsStr = onlineAgents?.map(a => `- ${a.name} (GPS: ${a.last_lat.toFixed(4)}, ${a.last_lng.toFixed(4)} | Check: ${new Date(a.last_seen).toLocaleTimeString('fr-FR')})`).join('\n') || "Aucun agent actif sur le terrain.";
+    const incidentsStr = openIncidents?.map(i => `- [${i.priority}] ${i.type} à "${i.location_description}" (Signalé par ${i.citizen_name})`).join('\n') || "Aucun incident en attente.";
 
-    let prompt = `Tu es Natango OS, l'âme opérationnelle de l'événement.
-HEURE SYSTÈME : ${timeStr}
+    let prompt = `Tu es Natango OS. ATTENTION : CECI N'EST PAS UNE SIMULATION. TU ES EN PRODUCTION RÉELLE SUR LE TERRAIN.
+DATE DU JOUR : ${dateStr}
+HEURE SYSTÈME EXACTE : ${timeStr}
 
---- ÉTAT DU TERRAIN (RAG SUPABASE) ---
-AGENTS ACTIFS ET GÉOLOCALISÉS :
+--- ÉTAT STRICT DU TERRAIN (BASE DE DONNÉES EN DIRECT) ---
+AGENTS OPÉRATIONNELS (Positions GPS réelles) :
 ${agentsStr}
 
-INCIDENTS CRITIQUES NON RÉSOLUS :
+INCIDENTS RÉELS À TRAITER :
 ${incidentsStr}
 
---- CONSIGNES ---
-- Sois ultra-direct (2 phrases max).
-- Si un agent demande "Où aller ?", regarde l'incident le plus proche de ses coordonnées GPS.
-- Si le DG demande un bilan, résume les effectifs et les urgences.`;
+--- CONSIGNES ABSOLUES ---
+1. N'INVENTE JAMAIS d'agents, de lieux, ou d'incidents. Base-toi UNIQUEMENT sur les données ci-dessus.
+2. Si un agent te parle, regarde ses coordonnées GPS et guide-le vers l'incident réel le plus proche.
+3. Sois ultra-direct, concret et professionnel. Pas de phrases robotiques, donne les infos terrain. (2 phrases max).`;
 
     if (targetAi === 'marketing') {
         const pendingCount = openIncidents?.length || 0;
@@ -651,13 +731,12 @@ ${incidentsStr}
         const completedCount = cCount || 0;
         return `Tu es Natango Marketing. Réponds UNIQUEMENT avec un objet JSON valide pour une infographie.
 {
-  "title": "Bilan Opérationnel : Gestion des Déchets",
-  "event_date": "${new Date().toLocaleDateString()}",
+  "title": "Bilan Opérationnel Terrain",
+  "event_date": "${dateStr}",
   "metrics": [
     {"label": "Signalements Actifs", "value": "${pendingCount}", "trend": "Aujourd'hui"},
     {"label": "Incidents Résolus", "value": "${completedCount}", "trend": "En cours"}
-  ],
-  "demographics": { "Collecte Lourde": 50, "Recyclable": 30, "Tout-venant": 20 }
+  ]
 }`;
     }
     return prompt;
@@ -1030,6 +1109,17 @@ Réponds en JSON :
         }
 
         if (verificationResult.valid) {
+            // NOUVEAU : Met immédiatement l'agent "En Ligne" sur la carte et pour l'IA
+            await supabase.from('users').upsert({
+                phone_number: agentPhone,
+                name: agentName,
+                role: 'Agent',
+                last_lat: lat,
+                last_lng: lng,
+                is_online: true,
+                last_seen: new Date().toISOString()
+            }, { onConflict: 'phone_number' });
+
             pushEvent('DG', 'rh', `✅ Check-in validé par Gemini : ${agentName || 'Agent'} à ${new Date().toLocaleTimeString()}. Position: ${lat}, ${lng}`, 'system');
             res.json({ success: true, message: "Check-in validé par IA.", verification: verificationResult });
         } else {
@@ -1049,43 +1139,73 @@ Réponds en JSON :
 
 app.post('/api/generate-document', async (req, res) => {
     try {
-        const { type, data, customPrompt } = req.body;
+        const { type, customPrompt } = req.body;
         if (!ai) return res.status(500).json({ success: false, error: "Client Gemini non initialisé." });
 
-        // Récupérer les données opérationnelles
-        let pendingCount = 0, completedCount = 0;
-        try {
-            const { count: pCount } = await supabase.from('incidents').select('*', { count: 'exact', head: true }).eq('status', 'pending');
-            const { count: cCount } = await supabase.from('incidents').select('*', { count: 'exact', head: true }).eq('status', 'completed');
-            pendingCount = pCount || 0;
-            completedCount = cCount || 0;
-        } catch (e) { }
+        // 1. RÉCUPÉRER LES VRAIES DONNÉES DE PRODUCTION (RAG)
+        const { count: pendingCount } = await supabase.from('incidents').select('*', { count: 'exact', head: true }).eq('status', 'pending');
+        const { count: completedCount } = await supabase.from('incidents').select('*', { count: 'exact', head: true }).eq('status', 'completed');
+        const { count: agentCount } = await supabase.from('users').select('*', { count: 'exact', head: true }).eq('role', 'Agent').eq('is_online', true);
 
-        let prompt;
+        const total = (pendingCount || 0) + (completedCount || 0);
+        const tauxResolution = total > 0 ? Math.round((completedCount / total) * 100) : 0;
+        const dateStr = new Date().toLocaleDateString('fr-FR');
+
+        let systemPrompt = "";
+        let finalPrompt = "";
+        let options = {};
+
         if (type === 'rapport') {
-            prompt = `Tu es Natango Marketing. Génère un rapport opérationnel complet en format Markdown.
+            systemPrompt = `Tu es Natango Marketing. Génère un rapport opérationnel complet en format Markdown.
 Données du système :
-- Incidents actifs : ${pendingCount}
-- Incidents résolus : ${completedCount}
-- Date : ${new Date().toLocaleDateString('fr-FR')}
-${data ? `Données supplémentaires : ${JSON.stringify(data)}` : ''}
+- Incidents actifs : ${pendingCount || 0}
+- Incidents résolus : ${completedCount || 0}
+- Date : ${dateStr}
 ${customPrompt ? `Instructions spéciales : ${customPrompt}` : ''}
 
 Génère un rapport professionnel avec : titre, résumé exécutif, métriques clés, analyse, recommandations.`;
-        } else if (type === 'infographie') {
-            prompt = `Génère les données JSON pour une infographie marketing professionnelle.
-Données : incidents actifs=${pendingCount}, résolus=${completedCount}, date=${new Date().toLocaleDateString('fr-FR')}
-${customPrompt || ''}
-Réponds UNIQUEMENT en JSON avec : title, subtitle, metrics[], highlights[], recommendations[].`;
+            finalPrompt = "Génère le rapport Markdown.";
+        }
+        else if (type === 'infographie') {
+            // 🤖 NOUVEAU : GEMINI DEVIENT DESIGNER SVG
+            systemPrompt = `Tu es Natango AI Vision, designer expert en infographies vectorielles (SVG).
+Ton but est de créer un visuel moderne, épuré et professionnel pour le marketing de la propreté urbaine.
+
+DONNÉES RÉELLES DU TERRAIN (À INTÉGRER IMPÉRATIVEMENT) :
+- Date : ${dateStr}
+- Incidents Résolus : ${completedCount || 0}
+- Incidents En Attente : ${pendingCount || 0}
+- Taux de Résolution : ${tauxResolution}%
+- Agents Actifs : ${agentCount || 0}
+
+CONSIGNES DE DESIGN :
+- Génère UNIQUEMENT le code <svg>...</svg> complet, sans texte explicatif avant ou après.
+- Utilise une palette de couleurs pro : Fond sombre (#111b21), accents bleus (#0056FF), vert succès (#00a884), rouge urgence (#ef4444).
+- Structure : Un titre clair, 3 ou 4 cartes de métriques distinctes avec icônes simples, et un graphique visuel (barres ou cercle).
+- Le texte doit être lisible et les chiffres gros.
+- Adapte le design si l'utilisateur donne une instruction spéciale : ${customPrompt || 'Aucune'}`;
+
+            finalPrompt = "Génère l'infographie SVG dynamique basée sur les données réelles fournies.";
         } else {
-            prompt = customPrompt || "Génère un document marketing résumant les opérations.";
+            systemPrompt = customPrompt || "Génère un document marketing résumant les opérations.";
+            finalPrompt = systemPrompt;
         }
 
-        const result = await chatWithGemini(prompt, [], prompt, { jsonMode: type === 'infographie' });
+        // 2. APPEL À GEMINI 2.0 FLASH
+        const result = await chatWithGemini(systemPrompt, [], finalPrompt, options);
+
+        // 3. SAUVEGARDER LE RAPPORT DANS LA NOUVELLE TABLE SUPABASE
+        try {
+            await supabase.from('generated_reports').insert([{
+                report_type: type,
+                content: result, // Sauvegarde le Markdown ou le code SVG
+                created_by: 'Natango Marketing'
+            }]);
+        } catch (e) { console.warn("Erreur sauvegarde rapport:", e.message); }
 
         res.json({
             success: true,
-            document: result,
+            document: result, // Contient le code SVG ou Markdown
             type,
             generatedAt: new Date().toISOString()
         });
@@ -1193,6 +1313,54 @@ app.get('/api/meetings/:id', async (req, res) => {
 });
 
 // =====================================================
+// DOSSIER RH : STATISTIQUES JOURNALIÈRES DE L'AGENT
+// =====================================================
+app.get('/api/agent-stats/:phone', async (req, res) => {
+    try {
+        const phone = req.params.phone;
+        // Date du jour au format YYYY-MM-DD
+        const today = new Date().toLocaleDateString('en-CA');
+
+        // 1. Chercher le check-in du jour
+        const { data: checkin } = await supabase
+            .from('checkins')
+            .select('timestamp, is_valid')
+            .eq('agent_phone', phone)
+            .gte('timestamp', today)
+            .order('timestamp', { ascending: true })
+            .limit(1)
+            .single();
+
+        // 2. Chercher les missions terminées aujourd'hui
+        const { data: missions } = await supabase
+            .from('incidents')
+            .select('incident_id')
+            .eq('assigned_agent_phone', phone)
+            .eq('status', 'completed')
+            .gte('timestamp_completed', today);
+
+        const missionsCount = missions ? missions.length : 0;
+        const xp = 1200 + (missionsCount * 150); // XP = Base + 150 points par déchet nettoyé
+
+        let status = 'Absent';
+        let checkinTime = null;
+
+        if (checkin) {
+            const dateObj = new Date(checkin.timestamp);
+            checkinTime = dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+            // RÈGLE RH : Avant 9h00 = Présent / Après 9h00 = Retard
+            status = dateObj.getHours() < 9 ? 'Présent' : 'Retard';
+        }
+
+        res.json({ success: true, stats: { status, checkinTime, missionsCount, xp } });
+    } catch (error) {
+        console.error("Erreur agent-stats:", error.message);
+        res.status(500).json({ success: false });
+    }
+});
+
+// =====================================================
 // DASHBOARD TEMPS RÉEL (WebSocket + HTTP fallback)
 // =====================================================
 
@@ -1251,6 +1419,25 @@ async function getDashboardData() {
     const avgFillRate = pendingCount > 0 ? Math.min(100, 30 + (pendingCount * 15)) : 30;
     const resolutionRate = totalIncidents > 0 ? Math.round((completedCount / totalIncidents) * 100) : 0;
 
+    // Calcul du temps moyen d'intervention (en minutes)
+    let avgInterventionTime = 0;
+    try {
+        const { data: times } = await supabase
+            .from('incidents')
+            .select('timestamp_reported, timestamp_completed')
+            .eq('status', 'completed')
+            .not('timestamp_completed', 'is', null);
+
+        if (times && times.length > 0) {
+            let totalMins = 0;
+            times.forEach(t => {
+                const diffMs = new Date(t.timestamp_completed) - new Date(t.timestamp_reported);
+                totalMins += Math.round(diffMs / 60000); // Conversion en minutes
+            });
+            avgInterventionTime = Math.round(totalMins / times.length);
+        }
+    } catch (e) { }
+
     // Heatmap basée sur les positions RÉELLES des incidents
     const heatmapPoints = recentIncidents
         .filter(i => i.gps_latitude && i.gps_longitude && i.status !== 'completed')
@@ -1259,6 +1446,7 @@ async function getDashboardData() {
     return {
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         fillRate: avgFillRate,
+        avgInterventionTime,
         incidents: {
             pending: pendingCount,
             completed: completedCount,
@@ -1316,6 +1504,67 @@ app.get('/api/dashboard-live', async (req, res) => {
 
 // Mise à jour automatique toutes les 5 secondes pour les clients connectés
 setInterval(broadcastDashboardUpdate, 5000);
+
+// =====================================================
+// MODULE RH : VÉRIFICATION AUTOMATIQUE DE 9H00
+// =====================================================
+let hrCheckDoneToday = false;
+
+setInterval(async () => {
+    const now = new Date();
+    // On vérifie s'il est 9h00 (Heure de Dakar GMT)
+    if (now.getHours() === 9 && now.getMinutes() === 0 && !hrCheckDoneToday) {
+        hrCheckDoneToday = true;
+        console.log("⏰ 09:00 - Lancement de la vérification RH automatique...");
+
+        try {
+            const today = now.toLocaleDateString('en-CA'); // Format YYYY-MM-DD
+
+            // 1. Récupérer tous les agents autorisés
+            const { data: agents } = await supabase.from('authorized_users').select('phone_number, name').eq('role', 'Agent');
+
+            // 2. Récupérer les check-ins d'aujourd'hui
+            const { data: checkins } = await supabase.from('checkins').select('agent_phone').gte('timestamp', today);
+            const checkedInPhones = (checkins || []).map(c => c.agent_phone);
+
+            // 3. Croiser les données et alerter les retardataires
+            if (agents) {
+                agents.forEach(agent => {
+                    if (!checkedInPhones.includes(agent.phone_number)) {
+                        // Alarme sur le téléphone de l'agent
+                        pushEvent('Agent', agent.phone_number, `Il est 9h00 passées. Confirmez votre statut de présence.`, 'hr_attendance_prompt');
+                    }
+                });
+            }
+        } catch (e) {
+            console.error("Erreur vérification RH:", e.message);
+        }
+    }
+
+    // Réinitialiser le drapeau à minuit pour le lendemain
+    if (now.getHours() === 0) { hrCheckDoneToday = false; }
+}, 60000); // Vérifie l'heure toutes les minutes
+
+// --- ROUTE POUR RECEVOIR LA RÉPONSE DE L'AGENT ---
+app.post('/api/hr-attendance', async (req, res) => {
+    const { phone, name, isComing, reason } = req.body;
+
+    try {
+        if (isComing) {
+            // L'agent arrive (Retard)
+            pushEvent('DG', 'rh', `⚠️ RETARD : ${name} n'est pas encore en poste mais signale son arrivée. Motif : "${reason}".`, 'system');
+            // Note : Il reste éligible à l'assignation MAIS il devra quand même faire son selfie en arrivant pour passer "En Ligne" GPS.
+        } else {
+            // L'agent ne vient pas (Absence)
+            pushEvent('DG', 'rh', `❌ ABSENCE : ${name} est absent aujourd'hui. Motif : "${reason}".`, 'system');
+            // On le force hors-ligne pour que l'auto-assignation l'ignore totalement
+            await supabase.from('users').update({ is_online: false, last_lat: null, last_lng: null }).eq('phone_number', phone);
+        }
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false });
+    }
+});
 
 // =====================================================
 // DÉMARRAGE DU SERVEUR
