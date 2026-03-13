@@ -819,9 +819,8 @@ export default function App() {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ 
-                        phone: formData.phone, 
-                        pin: formData.pinCode, 
-                        role: formData.role 
+                        phone: formData.phone.replace(/\s/g, ''), // Nettoie les espaces automatiqument
+                        pin: formData.pinCode 
                       })
                     });
                     

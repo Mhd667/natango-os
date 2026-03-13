@@ -240,23 +240,21 @@ function pushEvent(targetRole, chatId, content, type = 'system', additionalProps
 // AUTHENTIFICATION (LISTE BLANCHE SUPABASE)
 // =====================================================
 app.post('/api/auth/login', async (req, res) => {
-    const { phone, pin, role } = req.body;
-
+    const { phone, pin } = req.body; // 👈 On enlève le rôle ici
+    
     try {
-        // Vérifie si le numéro, le rôle et le code PIN correspondent exactement
+        // Le serveur cherche juste le numéro et le code
         const { data: user, error } = await supabase
             .from('authorized_users')
             .select('*')
             .eq('phone_number', phone)
             .eq('pin_code', pin)
-            .eq('role', role)
             .single();
 
         if (user) {
-            // Accès autorisé
+            // Accès autorisé : Le serveur renvoie le rôle exact trouvé dans la base !
             res.json({ success: true, user: { name: user.name, phone: user.phone_number, role: user.role } });
         } else {
-            // Accès refusé (mauvais numéro, mauvais rôle ou mauvais code)
             res.json({ success: false, message: "Accès refusé. Numéro non autorisé ou code incorrect." });
         }
     } catch (e) {
