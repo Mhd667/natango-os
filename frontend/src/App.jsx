@@ -810,66 +810,83 @@ export default function App() {
                 {formData.role !== 'Public' && (
                   <div className="flex justify-center mb-10"><input type="file" id="photo-upload" accept="image/*" className="hidden" onChange={handlePhotoUpload} /><div onClick={() => document.getElementById('photo-upload').click()} className="w-28 h-28 rounded-full flex items-center justify-center cursor-pointer border-4 border-gray-200 dark:border-[#202c33] bg-gray-100 dark:bg-[#111b21] overflow-hidden shadow-inner">{formData.photo ? <img src={formData.photo} className="w-full h-full object-cover" /> : <Camera size={36} className="text-gray-400" />}</div></div>
                 )}
-                <form onSubmit={async (e) => {
-                  e.preventDefault();
-
-                  // 1. Afficher un indicateur de chargement
-                  showToast("Vérification des accès en cours...");
+                <form onSubmit={async (e) => { 
+                  e.preventDefault(); 
+                  setToastMessage({ title: "Connexion", body: "Vérification des accès en cours..." });
 
                   try {
-                    // 2. Interroger la Liste Blanche sur le serveur
                     const response = await fetch('https://natango-os.onrender.com/api/auth/login', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        phone: formData.phone,
-                        pin: formData.pinCode,
-                        role: formData.role
+                      body: JSON.stringify({ 
+                        phone: formData.phone, 
+                        pin: formData.pinCode, 
+                        role: formData.role 
                       })
                     });
-
+                    
                     const result = await response.json();
 
                     if (result.success) {
-                      // 3. SUCCÈS : On connecte l'utilisateur avec ses vraies infos de la BDD
+                      // SUCCÈS : Le serveur nous renvoie le vrai nom (result.user.name) !
                       setToastMessage(null);
-                      setCurrentUser(result.user);
+                      setCurrentUser(result.user); 
                       localStorage.setItem('natangoUser', JSON.stringify(result.user));
-                      setChats(generateInitialChats(result.user.role, result.user.name));
-                      setActiveChatId(result.user.role === 'DG' ? 'hub' : 'terrain');
-
-                      // 🚀 NOUVEAU : LOGIQUE D'ONBOARDING
+                      setChats(generateInitialChats(result.user.role, result.user.name)); 
+                      setActiveChatId(result.user.role === 'DG' ? 'hub' : 'terrain'); 
+                      
+                      // Logique d'Onboarding
                       const hasSeenTutorial = localStorage.getItem('natangoOnboarding');
                       if (!hasSeenTutorial && result.user.role === 'Agent') {
-                        setShowOnboarding(true); // Lance le tutoriel pour les nouveaux agents
+                        setShowOnboarding(true);
                       }
-
-                      // NOUVEAU : On prépare l'arrivée de l'Onboarding IA
-                      if (result.onboardingMessage) {
-                        setOnboardingText(result.onboardingMessage);
-                      } else {
-                        setOnboardingText(`Bonjour ${result.user.name}. Je suis Natango AI, votre assistant opérationnel. Initialisation de votre espace de travail en cours...`);
-                      }
-                      setStep(4);
                     } else {
-                      // 4. ÉCHEC : On bloque l'accès
                       setToastMessage(null);
                       alert(`⛔ ${result.message}`);
                     }
                   } catch (error) {
                     setToastMessage(null);
-                    alert("Erreur réseau. Impossible de vérifier les accès.");
+                    alert("Erreur réseau. Vérifiez que votre serveur local ou Render tourne bien.");
                   }
                 }} className="space-y-6">
-                  <div className="border-b-2 border-gray-300 dark:border-[#202c33] focus-within:border-[#0056FF] dark:focus-within:border-[#00a884] pb-2"><input type="text" placeholder="Prénom et Nom" className="w-full bg-transparent font-bold text-xl outline-none dark:text-[#e9edef] placeholder:text-gray-400" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} required /></div>
-                  <div><p className="text-xs text-gray-500 uppercase font-bold mb-4 tracking-wider">Sélectionnez votre rôle</p>
-                    <div className="grid grid-cols-3 gap-2">
-                      <div onClick={() => setFormData({ ...formData, role: 'DG' })} className={`p-3 rounded-2xl border-2 cursor-pointer flex flex-col items-center ${formData.role === 'DG' ? 'border-[#0056FF] dark:border-[#00a884] bg-blue-50 dark:bg-[#00a884]/10' : 'border-gray-200 dark:border-[#202c33]'}`}><LayoutDashboard size={24} className={formData.role === 'DG' ? 'text-[#0056FF] dark:text-[#00a884]' : 'text-gray-400'} /><span className={`text-[12px] font-bold mt-2 ${formData.role === 'DG' ? 'text-[#0056FF] dark:text-[#00a884]' : 'text-gray-500'}`}>Directeur</span></div>
-                      <div onClick={() => setFormData({ ...formData, role: 'Agent' })} className={`p-3 rounded-2xl border-2 cursor-pointer flex flex-col items-center ${formData.role === 'Agent' ? 'border-[#0056FF] dark:border-[#00a884] bg-blue-50 dark:bg-[#00a884]/10' : 'border-gray-200 dark:border-[#202c33]'}`}><Target size={24} className={formData.role === 'Agent' ? 'text-[#0056FF] dark:text-[#00a884]' : 'text-gray-400'} /><span className={`text-[12px] font-bold mt-2 ${formData.role === 'Agent' ? 'text-[#0056FF] dark:text-[#00a884]' : 'text-gray-500'}`}>Agent</span></div>
-                      <div onClick={() => setFormData({ ...formData, role: 'Public' })} className={`p-3 rounded-2xl border-2 cursor-pointer flex flex-col items-center ${formData.role === 'Public' ? 'border-red-500 bg-red-50' : 'border-gray-200 dark:border-[#202c33]'}`}><Users size={24} className={formData.role === 'Public' ? 'text-red-500' : 'text-gray-400'} /><span className={`text-[12px] font-bold mt-2 ${formData.role === 'Public' ? 'text-red-500' : 'text-gray-500'}`}>Public</span></div>
-                    </div>
+
+                  {/* 1. CHAMP NUMÉRO DE TÉLÉPHONE */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                      <Phone size={16} className="text-[#0056FF]" /> 
+                      Numéro de téléphone
+                    </label>
+                    <input 
+                      type="tel"
+                      required
+                      placeholder="Ex: 774089807"
+                      className="w-full p-4 rounded-2xl bg-gray-50 dark:bg-[#202c33] border-none text-gray-900 dark:text-white font-bold focus:ring-2 focus:ring-[#0056FF] transition-all"
+                      value={formData.phone}
+                      onChange={(e) => setFormData({...formData, phone: e.target.value})}
+                    />
                   </div>
-                  <div className="flex justify-center pt-6"><button type="submit" className={`px-10 py-4 rounded-full font-bold w-full text-lg shadow-xl ${formData.name.length > 2 ? 'bg-[#0056FF] dark:bg-[#00a884] text-white dark:text-[#111b21]' : 'bg-gray-200 text-gray-400'}`} disabled={formData.name.length <= 2}>Activer Natango</button></div>
+
+                  {/* 2. CHAMP CODE D'ACCÈS SECRET (REMPLACE LE NOM) */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                      <Shield size={16} className="text-[#0056FF]" /> 
+                      Code d'accès secret
+                    </label>
+                    <input 
+                      type="password"
+                      required
+                      placeholder="Votre code PIN..."
+                      className="w-full p-4 rounded-2xl bg-gray-50 dark:bg-[#202c33] border-none text-gray-900 dark:text-white font-bold focus:ring-2 focus:ring-[#0056FF] transition-all"
+                      value={formData.pinCode || ''}
+                      onChange={(e) => setFormData({...formData, pinCode: e.target.value})}
+                    />
+                  </div>
+
+                  <button 
+                    type="submit"
+                    className="w-full py-4 bg-[#0056FF] text-white rounded-2xl font-black text-lg shadow-[0_10px_20px_rgba(0,86,255,0.3)] active:scale-95 transition-all">
+                    Activer Natango OS
+                  </button>
                 </form>
               </div>
             )}
