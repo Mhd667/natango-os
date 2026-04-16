@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@react-google-maps/api": "^2.20.8",
     "@tailwindcss/postcss": "^4.2.1",
     "axios": "^1.13.6",
     "clsx": "^2.1.1",
@@ -19,9 +20,11 @@
     "express": "^5.2.1",
     "form-data": "^4.0.5",
     "groq-sdk": "^0.37.0",
+    "html5-qrcode": "^2.3.8",
     "lucide-react": "^0.577.0",
     "mongoose": "^9.2.4",
     "multer": "^2.1.1",
+    "qrcode.react": "^4.2.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwind-merge": "^3.5.0"
