@@ -158,6 +158,8 @@ const whatsappClient = new Client({
 
 whatsappClient.on('qr', (qr) => {
     console.log('\n📱 TEST LIVE CE SOIR : SCANNE LE QR CODE\n');
+    console.log('--- COPIEZ LE TEXTE CI-DESSOUS ---');
+    console.log(qr); // Affiche le texte brut du QR code
     qrcode.generate(qr, { small: true });
 });
 
