@@ -139,10 +139,16 @@ async function elevenLabsTTS(text) {
 // ==========================================
 // 1.7. LE MOTEUR WHATSAPP
 // ==========================================
+// ==========================================
+// 1.7. LE MOTEUR WHATSAPP (Mode Survie Cloud)
+// ==========================================
 const whatsappClient = new Client({
     authStrategy: new LocalAuth(),
+    authTimeoutMs: 120000, // On donne 2 minutes à WhatsApp pour se connecter au lieu de 30s
     puppeteer: {
-        headless: true, // Repasser à false si vous voulez voir la fenêtre Chrome s'ouvrir
+        headless: true,
+        protocolTimeout: 300000, // LE FIX EST ICI : On donne 5 minutes à Render pour évaluer le code
+        timeout: 120000, 
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -150,8 +156,9 @@ const whatsappClient = new Client({
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
-            '--single-process', // Optionnel mais aide sur Render
-            '--disable-gpu'
+            '--single-process',
+            '--disable-gpu',
+            '--js-flags="--max-old-space-size=256"' // Bride la mémoire de Chrome pour éviter le crash de Render
         ]
     }
 });
