@@ -142,7 +142,7 @@ async function elevenLabsTTS(text) {
 const whatsappClient = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
-        headless: true,
+        headless: true, // Repasser à false si vous voulez voir la fenêtre Chrome s'ouvrir
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -171,82 +171,125 @@ whatsappClient.on('ready', () => {
 // LE CERVEAU WHATSAPP (Avec accès Admin)
 // ==========================================
 // IMPORTANT : on utilise 'message_create' pour lire TES propres messages
-whatsappClient.on('message_create', async msg => {
-    
-    // ----------------------------------------------------
-    // 1. LE POUVOIR DE DIEU (Si c'est TOI qui écris)
-    // ----------------------------------------------------
-    if (msg.fromMe && msg.body.toLowerCase().startsWith('!paye')) {
-        const cible = msg.body.split(' ')[1];
-        if (cible) {
-            const chatIdCible = `221${cible}@c.us`;
-            if (liveTestDB[chatIdCible]) {
-                liveTestDB[chatIdCible].statut = "Payé";
-                console.log(`💰 [OPS MANUAL] Paiement validé pour ${liveTestDB[chatIdCible].nom}`);
-                const recu = `✅ *PAIEMENT VALIDÉ*\n\nMerci ${liveTestDB[chatIdCible].nom} ! Votre paiement de 3500 FCFA a bien été détecté et encaissé.\n\n🚛 Natango Ops a été notifié, votre ramassage est confirmé. ♻️`;
+// Ton numéro de DG (Format WhatsApp = indicatif + numéro + @c.us)
+const NUMERO_DG = '221787825960@c.us'; // Identifié comme Mouhamed Sow (Agent Principal)
+
+whatsappClient.on('message_create', async (msg) => {
+    // LE MOUCHARD NATANGO :
+    console.log(`🚨 DING DONG ! Message de ${msg.from} : ${msg.body}`);
+
+    // --- 1. LOGIQUE DU DIRECTEUR GÉNÉRAL (Toi) ---
+    // On vérifie si c'est toi qui écris (soit via le numéro, soit msg.fromMe)
+    if (msg.from === NUMERO_DG || msg.fromMe) {
+        // Commande de validation de paiement : "payé 771234567" ou "!paye 771234567"
+        if (msg.body.toLowerCase().startsWith('payé')) {
+            console.log('✅ Ordre du DG reçu : Activation réelle dans Supabase');
+            const cible = msg.body.split(' ')[1];
+            
+            if (cible) {
+                const clientPhone = cible.replace(/[^0-9]/g, '');
+                const chatIdCible = `221${clientPhone}@c.us`;
+                
                 try {
-                    await whatsappClient.sendMessage(chatIdCible, recu);
-                    msg.reply(`✅ C'est bon boss ! ${liveTestDB[chatIdCible].nom} est passé au vert.`);
+                    // 1. IMPACT LOGISTIQUE (Ops) : On active le client dans la base
+                    const { error: clientError } = await supabase
+                        .from('clients')
+                        .update({ statut_abonnement: 'actif' })
+                        .eq('telephone', clientPhone);
+
+                    // 2. IMPACT FINANCIER (Account) : On crée la ligne de paiement
+                    const { error: paymentError } = await supabase
+                        .from('paiements')
+                        .insert([{
+                            montant: 3500,
+                            telephone_client: clientPhone,
+                            valide_par_dg: true,
+                            date_paiement: new Date().toISOString()
+                        }]);
+
+                    if (clientError || paymentError) throw new Error("Erreur de mise à jour Supabase");
+
+                    // Mise à jour de la mémoire locale pour le test live
+                    if (liveTestDB[chatIdCible]) {
+                        liveTestDB[chatIdCible].statut = "Payé";
+                    }
+
+                    console.log(`💰 Réalité modifiée : +3500 FCFA et Client ${clientPhone} activé.`);
+                    
+                    // Réponse au DG
+                    await msg.reply(`🫡 C'est fait DG. Statut : ACTIF. Impact : CA +3500 FCFA. Le client ${clientPhone} est maintenant visible sur la carte Ops.`);
+                    
+                    // Notification automatique au client
+                    const messageClient = "✅ *PAIEMENT REÇU* !\n\nVotre abonnement Natango est désormais actif. Nos équipes de ramassage passeront chaque matin. Merci de votre confiance ! ♻️";
+                    await whatsappClient.sendMessage(chatIdCible, messageClient);
+                    
                 } catch (err) {
-                    msg.reply("❌ Erreur d'envoi du reçu au client.");
+                    console.error("Erreur d'écriture Supabase:", err);
+                    await msg.reply("❌ Erreur lors de l'écriture dans Supabase. Vérifiez la connexion.");
                 }
-            } else {
-                msg.reply("❌ Numéro introuvable dans la base test.");
+                return;
             }
         }
-        return;
-    }
-
-    // ----------------------------------------------------
-    // 2. LE TRAITEMENT DES CLIENTS NORMAUX (Audio & Texte)
-    // ----------------------------------------------------
-    if (msg.fromMe || !liveTestDB[msg.from]) {
-        return; 
-    }
-
-    const chatId = msg.from;
-    let messageContent = msg.body;
-
-    // Si c'est un message vocal, on le transcrit d'abord
-    if (msg.hasMedia && (msg.type === 'audio' || msg.type === 'ptt')) {
-        console.log(`🎙️ Message vocal reçu de ${liveTestDB[chatId].nom}, transcription en cours...`);
-        const media = await msg.downloadMedia();
-        const transcription = await transcribeAudio(media.data, media.mimetype);
-        if (transcription) {
-            messageContent = transcription;
-            console.log(`📝 Transcription : "${messageContent}"`);
-        } else {
-            console.error("Impossible de transcrire le message vocal.");
+        // IMPORTANT : Pour éviter les boucles infinies, on ignore les messages du bot,
+        if (msg.fromMe && !msg.body.toLowerCase().startsWith('lucie')) {
             return;
         }
     }
 
-    const messageClientLower = messageContent.toLowerCase();
-    console.log(`📩 Message de ${liveTestDB[chatId].nom}: ${messageContent}`);
-
-    // 🔥 LE CAPTEUR D'INDISPONIBILITÉ
-    if (messageClientLower.includes('absent') || messageClientLower.includes('pas là') || messageClientLower.includes('voyage')) {
-        liveTestDB[chatId].statut = "Absent";
-        console.log(`⚠️ [OPS ALERT] ${liveTestDB[chatId].nom} est absent.`);
+    // --- 2. LOGIQUE DU FILTRE CLIENT (Simplifiée pour les tests) ---
+    const isDG = msg.from.includes(NUMERO_DG.split('@')[0]) || msg.fromMe;
+    
+    if (!isDG) {
+        // Optionnel : Vous pouvez remettre le filtre strict ici plus tard
+        // const isClientValide = liveTestDB[msg.from] ? true : false;
+        
+        if (msg.from.includes('@g.us')) {
+            console.log(`🔇 Groupe ignoré (${msg.from})`);
+            return; 
+        }
+        
+        console.log(`👥 Message d'un client (${msg.from}).`);
+    } else {
+        console.log(`👑 Message du DG reconnu.`);
     }
 
-    // Ndeye Fatou (Gemini) génère la réponse
-    const iaResponse = await natangoBrain(messageContent, chatId);
-    
-    // On envoie la réponse en texte
-    await msg.reply(iaResponse);
+    // --- 3. CONNEXION AU CERVEAU GEMINI (Audio & Texte) ---
+    try {
+        let messageContent = msg.body;
 
-    // ET on génère le vocal via ElevenLabs
-    console.log(`🗣️ Génération de la réponse vocale ElevenLabs...`);
-    const audioBase64 = await elevenLabsTTS(iaResponse);
-    if (audioBase64) {
-        const media = new MessageMedia('audio/mp3', audioBase64, 'response.mp3');
-        await whatsappClient.sendMessage(chatId, media, { sendAudioAsVoice: true });
-        console.log(`✅ Réponse vocale envoyée.`);
+        // Gestion des messages vocaux (STT)
+        if (msg.hasMedia && (msg.type === 'audio' || msg.type === 'ptt')) {
+            console.log(`🎙️ Message vocal reçu de ${liveTestDB[msg.from]?.nom || 'Test'}, transcription...`);
+            const media = await msg.downloadMedia();
+            const transcription = await transcribeAudio(media.data, media.mimetype);
+            if (transcription) {
+                messageContent = transcription;
+                console.log(`📝 Transcription : "${messageContent}"`);
+            } else {
+                return console.error("Échec de transcription.");
+            }
+        }
+
+        if (!messageContent) return;
+
+        console.log('🧠 Réflexion de Lucie (Gemini) en cours...');
+        const iaResponse = await natangoBrain(messageContent, msg.from);
+        
+        // Envoi de la réponse texte
+        await msg.reply(iaResponse);
+        console.log('✅ Réponse textuelle envoyée.');
+
+    } catch (error) {
+        console.error('❌ ERREUR CRITIQUE PENDANT LA RÉPONSE :', error);
     }
 });
 
-whatsappClient.initialize().catch(err => console.error("Erreur init WhatsApp:", err));
+console.log("⏳ Initialisation du moteur WhatsApp (Puppeteer)...");
+whatsappClient.initialize().then(() => {
+    console.log("✅ Appel à initialize() terminé.");
+}).catch(err => {
+    console.error("❌ Erreur CRITIQUE init WhatsApp:", err);
+});
 
 // =====================================================
 // 2. BUS D'ÉVÉNEMENTS INTERNE (Le système nerveux)
@@ -419,7 +462,14 @@ async function transcribeAudio(audioBase64, mimeType = "audio/webm") {
             body: JSON.stringify(requestBody)
         });
         const data = await response.json();
-        return data.candidates[0].content.parts[0].text;
+        
+        // Sécurité : Vérifier si la transcription est présente
+        const transcription = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!transcription) {
+            console.warn("⚠️ Gemini n'a pas pu transcrire l'audio (Réponse vide).");
+            return null;
+        }
+        return transcription;
     } catch (error) {
         console.error('Erreur Transcription:', error);
         return null;
@@ -509,6 +559,38 @@ app.post('/api/hire/onboard', async (req, res) => {
 // Route pour récupérer le statut de toutes les villas (Live Map)
 app.get('/api/dashboard/status', (req, res) => {
     res.json(liveTestDB);
+});
+
+// Endpoint pour le scellement d'un nouveau client (Abonnement)
+app.post('/api/scellement', async (req, res) => {
+    const { phone, name, quartier } = req.body;
+    
+    // Formatage du numéro pour WhatsApp
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    const formattedPhone = `221${cleanPhone}@c.us`;
+    
+    // Lien Wave (À personnaliser avec ton vrai numéro si besoin)
+    const waveLink = `https://wave.com/pay/v1/221787825960?amount=3500`;
+
+    const messageAbonnement = `🗑️ *SERVICE DE RAMASSAGE NATANGO*
+    
+Bonjour ${name}, 
+
+Bienvenue dans notre service de ramassage quotidien pour le quartier ${quartier || 'Cité Alioune Sow'}. 
+
+Pour activer votre abonnement mensuel et profiter de notre passage dès demain, merci de régler les frais de *3500 FCFA* via ce lien sécurisé Wave :
+    
+👉 ${waveLink}
+    
+Une fois le transfert effectué, je validerai votre compte automatiquement.`;
+
+    try {
+        await whatsappClient.sendMessage(formattedPhone, messageAbonnement);
+        res.status(200).json({ success: true, message: 'Message de scellement envoyé' });
+    } catch (err) {
+        console.error("Erreur scellement WhatsApp:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
 });
 
 // =====================================================
