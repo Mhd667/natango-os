@@ -142,8 +142,7 @@ async function elevenLabsTTS(text) {
 const whatsappClient = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
-        headless: true,
-        executablePath: '/usr/bin/chromium', // 👈 LE FIX EST ICI ! On utilise le Chrome de Railway
+        headless: true, // 👈 Juste ça, on a retiré l'executablePath
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
