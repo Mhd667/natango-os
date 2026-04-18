@@ -287,7 +287,9 @@ whatsappClient.on('message_create', async (msg) => {
 // ==========================================
 // LE COUPE-CIRCUIT POUR LA DÉMO CLOUD
 // ==========================================
-const MODE_DEMO_SANS_WHATSAPP = true; // Laisse sur "true" pour le push vers Railway
+// Par défaut, on active le mode démo (true) sur le Cloud.
+// Sur votre PC, mettez MODE_DEMO_SANS_WHATSAPP=false dans le fichier .env
+const MODE_DEMO_SANS_WHATSAPP = process.env.MODE_DEMO_SANS_WHATSAPP !== 'false'; 
 
 if (!MODE_DEMO_SANS_WHATSAPP) {
     console.log("⏳ Initialisation du moteur WhatsApp (Puppeteer)...");
