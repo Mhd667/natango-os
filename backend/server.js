@@ -284,13 +284,21 @@ whatsappClient.on('message_create', async (msg) => {
         console.error('❌ ERREUR CRITIQUE PENDANT LA RÉPONSE :', error);
     }
 });
+// ==========================================
+// LE COUPE-CIRCUIT POUR LA DÉMO CLOUD
+// ==========================================
+const MODE_DEMO_SANS_WHATSAPP = true; // Laisse sur "true" pour le push vers Railway
 
-console.log("⏳ Initialisation du moteur WhatsApp (Puppeteer)...");
-whatsappClient.initialize().then(() => {
-    console.log("✅ Appel à initialize() terminé.");
-}).catch(err => {
-    console.error("❌ Erreur CRITIQUE init WhatsApp:", err);
-});
+if (!MODE_DEMO_SANS_WHATSAPP) {
+    console.log("⏳ Initialisation du moteur WhatsApp (Puppeteer)...");
+    whatsappClient.initialize().then(() => {
+        console.log("✅ Appel à initialize() terminé.");
+    }).catch(err => {
+        console.error("❌ Erreur CRITIQUE init WhatsApp:", err);
+    });
+} else {
+    console.log("⚠️ MODE DÉMO ACTIF : Le lourd moteur WhatsApp est désactivé. Le serveur tourne à 100%.");
+}
 
 // =====================================================
 // 2. BUS D'ÉVÉNEMENTS INTERNE (Le système nerveux)
