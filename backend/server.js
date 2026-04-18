@@ -137,18 +137,13 @@ async function elevenLabsTTS(text) {
 }
 
 // ==========================================
-// 1.7. LE MOTEUR WHATSAPP
-// ==========================================
-// ==========================================
-// 1.7. LE MOTEUR WHATSAPP (Mode Survie Cloud)
+// 1.7. LE MOTEUR WHATSAPP (Version Railway)
 // ==========================================
 const whatsappClient = new Client({
     authStrategy: new LocalAuth(),
-    authTimeoutMs: 120000, // On donne 2 minutes à WhatsApp pour se connecter au lieu de 30s
     puppeteer: {
         headless: true,
-        protocolTimeout: 300000, // LE FIX EST ICI : On donne 5 minutes à Render pour évaluer le code
-        timeout: 120000, 
+        executablePath: '/usr/bin/chromium', // 👈 LE FIX EST ICI ! On utilise le Chrome de Railway
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -157,8 +152,7 @@ const whatsappClient = new Client({
             '--no-first-run',
             '--no-zygote',
             '--single-process',
-            '--disable-gpu',
-            '--js-flags="--max-old-space-size=256"' // Bride la mémoire de Chrome pour éviter le crash de Render
+            '--disable-gpu'
         ]
     }
 });
