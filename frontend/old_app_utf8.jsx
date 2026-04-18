@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Loader2, CheckCircle2, MoreVertical, Paperclip, Mic,
   MessageCircle, Phone, LayoutDashboard, User, BarChart2,
@@ -124,7 +124,7 @@ export default function App() {
     setActiveOverlay('agent_details');
     setSelectedAgentStats({ ...agent, loading: true });
     try {
-      const res = await fetch(`https://natango-os.onrender.com/api/agent-stats/${agent.phone || agent.phone_number}`);
+      const res = await fetch(`https://natango-os-production.up.railway.app/api/agent-stats/${agent.phone || agent.phone_number}`);
       const data = await res.json();
       if (data.success) {
         setSelectedAgentStats({ ...agent, ...data.stats, loading: false });
@@ -235,7 +235,7 @@ export default function App() {
               // SAUVEGARDE LA POSITION EN DIRECT POUR LE RADAR
               setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
 
-              fetch('https://natango-os.onrender.com/api/heartbeat', {
+              fetch('https://natango-os-production.up.railway.app/api/heartbeat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ phone: currentUser.phone, name: currentUser.name, lat: pos.coords.latitude, lng: pos.coords.longitude })
@@ -260,7 +260,7 @@ export default function App() {
     if (currentUser && currentUser.role !== 'Public') {
       intervalEvents = setInterval(async () => {
         try {
-          const res = await fetch(`https://natango-os.onrender.com/api/events/${currentUser.role}/${currentUser.phone}`);
+          const res = await fetch(`https://natango-os-production.up.railway.app/api/events/${currentUser.role}/${currentUser.phone}`);
           const data = await res.json();
           if (data.success && data.events.length > 0) {
             setChats(prev => {
@@ -295,7 +295,7 @@ export default function App() {
       if (currentUser.role === 'Agent') {
         intervalTasks = setInterval(async () => {
           try {
-            const res = await fetch(`https://natango-os.onrender.com/api/tasks/${currentUser.phone}`);
+            const res = await fetch(`https://natango-os-production.up.railway.app/api/tasks/${currentUser.phone}`);
             const data = await res.json();
             if (data.success && data.task && !knownTasksRef.current.has(data.task.id)) {
               knownTasksRef.current.add(data.task.id);
@@ -320,7 +320,7 @@ export default function App() {
 
       if (currentUser.role === 'DG') {
         intervalDg = setInterval(async () => {
-          try { const res = await fetch('https://natango-os.onrender.com/api/dashboard-live'); const data = await res.json(); if (data.success) setLiveData(data.data); } catch (e) { }
+          try { const res = await fetch('https://natango-os-production.up.railway.app/api/dashboard-live'); const data = await res.json(); if (data.success) setLiveData(data.data); } catch (e) { }
         }, 5000);
       }
     }
@@ -475,7 +475,7 @@ export default function App() {
     setChats(prev => ({ ...prev, [cid]: { ...prev[cid], messages: [...prev[cid].messages, { id: Date.now(), type: 'text_in', content: userMessage, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }] } }));
     setInputText(''); setIsAiTyping(true);
     try {
-      const response = await fetch('https://natango-os.onrender.com/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: currentUser.phone, userName: currentUser.name, role: currentUser.role, targetAi: cid, message: userMessage, history: getHistoryForApi(cid) }) });
+      const response = await fetch('https://natango-os-production.up.railway.app/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: currentUser.phone, userName: currentUser.name, role: currentUser.role, targetAi: cid, message: userMessage, history: getHistoryForApi(cid) }) });
       const data = await response.json();
       if (data.success) setChats(prev => ({ ...prev, [cid]: { ...prev[cid], messages: [...prev[cid].messages, data.reply] } }));
     } catch (error) { showToast("Erreur Serveur IA."); } finally { setIsAiTyping(false); }
@@ -518,7 +518,7 @@ export default function App() {
     fd.append('audio', blob, `meeting_chunk.${ext}`); fd.append('role', currentUser.role); fd.append('userName', currentUser.name); fd.append('targetAi', target); fd.append('history', JSON.stringify(getHistoryForApi(target))); fd.append('meetingContext', meetingTranscriptRef.current); fd.append('isSessionActive', isSessionActive);
 
     try {
-      const response = await fetch('https://natango-os.onrender.com/api/meeting-chunk', { method: 'POST', body: fd });
+      const response = await fetch('https://natango-os-production.up.railway.app/api/meeting-chunk', { method: 'POST', body: fd });
       const data = await response.json();
       if (data.success && data.transcription) {
         meetingTranscriptRef.current += " " + data.transcription; setMeetingTranscript(meetingTranscriptRef.current);
@@ -542,7 +542,7 @@ export default function App() {
       showToast("G├®n├®ration du rapport...");
       try {
         const target = currentUser.role === 'DG' ? 'hub' : 'terrain';
-        const res = await fetch('https://natango-os.onrender.com/api/summary', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transcript: meetingTranscriptRef.current }) });
+        const res = await fetch('https://natango-os-production.up.railway.app/api/summary', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transcript: meetingTranscriptRef.current }) });
         const data = await res.json();
         if (data.success) {
           const durationMin = Math.max(1, Math.round((Date.now() - (callStartTime || Date.now())) / 60000));
@@ -613,7 +613,7 @@ export default function App() {
     const fd = new FormData(); fd.append('audio', audioBlob, `voice.${mimeType.includes('mp4') ? 'mp4' : 'webm'}`);
     fd.append('userId', currentUser.phone); fd.append('userName', currentUser.name); fd.append('role', currentUser.role); fd.append('targetAi', cid); fd.append('history', JSON.stringify(getHistoryForApi(cid)));
     try {
-      const response = await fetch('https://natango-os.onrender.com/api/voice', { method: 'POST', body: fd }); const data = await response.json();
+      const response = await fetch('https://natango-os-production.up.railway.app/api/voice', { method: 'POST', body: fd }); const data = await response.json();
       if (data.success) {
         setChats(prev => { const msgs = prev[cid].messages.map(m => m.id === tempId ? { ...m, duration: '0:05' } : m); return { ...prev, [cid]: { ...prev[cid], messages: msgs } }; });
         setChats(prev => ({ ...prev, [cid]: { ...prev[cid], messages: [...prev[cid].messages, data.reply] } }));
@@ -626,7 +626,7 @@ export default function App() {
   const validateCheckIn = async () => {
     if (!checkinPhoto) { showToast("Veuillez prendre une photo."); return; }
     try {
-      await fetch('https://natango-os.onrender.com/api/checkin', { method: 'POST' });
+      await fetch('https://natango-os-production.up.railway.app/api/checkin', { method: 'POST' });
       setActiveOverlay(null); showToast("Check-in valid├® !");
       setChats(prev => ({ ...prev, 'rh': { ...prev['rh'], messages: [...prev['rh'].messages, { id: Date.now(), type: 'text_out', content: `Check-in enregistr├® ├á ${locationStr}. Simulation d├®marr├®e.`, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }] } }));
     }
@@ -636,7 +636,7 @@ export default function App() {
   const validateTask = async () => {
     if (!checkinPhoto || !currentTaskId) return;
     try {
-      await fetch('https://natango-os.onrender.com/api/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: currentTaskId, photo: checkinPhoto, agentName: currentUser.name }) });
+      await fetch('https://natango-os-production.up.railway.app/api/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: currentTaskId, photo: checkinPhoto, agentName: currentUser.name }) });
       setResolvedTasks(prev => [...prev, currentTaskId]);
       setActiveOverlay(null); setCheckinPhoto(null);
       showToast("Mission accomplie ! L'IA v├®rifie et pr├®vient le Superviseur.");
@@ -649,7 +649,7 @@ export default function App() {
     const issue = prompt("D├®crivez le probl├¿me (ex: Plus de sacs, Zone bloqu├®e) :");
     if (!issue) return;
     try {
-      await fetch('https://natango-os.onrender.com/api/agent-issue', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: currentUser.name, phone: currentUser.phone, issue }) });
+      await fetch('https://natango-os-production.up.railway.app/api/agent-issue', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: currentUser.name, phone: currentUser.phone, issue }) });
       showToast("Probl├¿me envoy├®. En attente d'une solution de l'IA...");
       setChats(prev => ({ ...prev, 'terrain': { ...prev['terrain'], messages: [...prev['terrain'].messages, { id: Date.now(), type: 'text_out', content: `Signalement probl├¿me : ${issue}`, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }] } }));
     } catch (e) { }
@@ -657,7 +657,7 @@ export default function App() {
 
   const resolveDgAction = async (msgId) => {
     try {
-      await fetch('https://natango-os.onrender.com/api/dg-action', { method: 'POST' });
+      await fetch('https://natango-os-production.up.railway.app/api/dg-action', { method: 'POST' });
       setChats(prev => {
         const newTerrain = [...prev['terrain'].messages];
         const idx = newTerrain.findIndex(m => m.id === msgId);
@@ -672,7 +672,7 @@ export default function App() {
     if (!citizenData.name || !citizenData.phone) { showToast("Veuillez renseigner Nom et Num├®ro."); return; }
     showToast("Analyse de l'image par l'IA Natango...");
     try {
-      const res = await fetch('https://natango-os.onrender.com/api/report', {
+      const res = await fetch('https://natango-os-production.up.railway.app/api/report', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ zone: publicZone, type: citizenData.type, name: citizenData.name, phone: citizenData.phone, lat: coords?.lat || 14.7, lng: coords?.lng || -17.4, photoBase64: checkinPhoto })
       });
@@ -815,7 +815,7 @@ export default function App() {
                   setToastMessage({ title: "Connexion", body: "V├®rification des acc├¿s en cours..." });
 
                   try {
-                    const response = await fetch('https://natango-os.onrender.com/api/auth/login', {
+                    const response = await fetch('https://natango-os-production.up.railway.app/api/auth/login', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ 
@@ -970,7 +970,7 @@ export default function App() {
                           return;
                         }
                         // Envoi au serveur
-                        await fetch('https://natango-os.onrender.com/api/decline-mission', {
+                        await fetch('https://natango-os-production.up.railway.app/api/decline-mission', {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({
@@ -1082,7 +1082,7 @@ export default function App() {
                           }
 
                           // Envoi au serveur
-                          await fetch('https://natango-os.onrender.com/api/hr-attendance', {
+                          await fetch('https://natango-os-production.up.railway.app/api/hr-attendance', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({

@@ -6,5 +6,5 @@ export const getApiBaseUrl = (userRole) => {
   }
   
   // Dans tous les autres cas (DG, Superviseur en local), on pointe sur localhost
-  return 'http://localhost:5000';
+  return 'https://natango-os-production.up.railway.app';
 };

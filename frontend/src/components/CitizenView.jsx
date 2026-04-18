@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { AlertTriangle, Camera as CameraIcon, Target, X, MapPin, Send, Bell } from 'lucide-react';
 
 export default function CitizenView({ currentUser, isDarkMode }) {
-  const API_BASE_URL = 'http://localhost:5000';
+  const API_BASE_URL = 'https://natango-os-production.up.railway.app';
   const [activeOverlay, setActiveOverlay] = useState(null);
   const [publicStep, setPublicStep] = useState(1);
   const [checkinPhoto, setCheckinPhoto] = useState(null);

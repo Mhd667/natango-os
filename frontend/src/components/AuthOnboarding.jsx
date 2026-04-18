@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Loader2, Phone, Shield, Camera, Target, Navigation, CheckCircle2, ChevronRight, Bell, X } from 'lucide-react';
 
 export default function AuthOnboarding({ onLoginSuccess, isDarkMode }) {
-  const API_BASE_URL = 'http://localhost:5000';
+  const API_BASE_URL = 'https://natango-os-production.up.railway.app';
   
   // États 100% locaux à l'écran de connexion
   const [step, setStep] = useState(0);

@@ -21,10 +21,10 @@ const getInitialApiUrl = () => {
         const savedUser = localStorage.getItem('natangoUser');
         if (savedUser) {
             const user = JSON.parse(savedUser);
-            if (user.role === 'Agent') return 'https://a587568ac7fffa.lhr.life';
+            if (user.role === 'Agent') return 'https://natango-os-production.up.railway.app';
         }
     } catch (e) {}
-    return 'http://localhost:5000';
+    return 'https://natango-os-production.up.railway.app';
 };
 
 const API_BASE_URL = getInitialApiUrl();
@@ -99,7 +99,7 @@ function AudioPlayer({ base64, bars, mime }) {
 // =====================================================
 const playGeminiVoice = async (text) => {
   try {
-    const response = await fetch('http://localhost:5000/api/gemini-voice', {
+    const response = await fetch('https://natango-os-production.up.railway.app/api/gemini-voice', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text })
@@ -774,7 +774,7 @@ export default function App() {
 
     // 1. Connexion au WebSocket de ton backend
     // Si tu es en prod, remplace ws:// par wss://
-    liveWsRef.current = new WebSocket(`ws://localhost:5000/api/meeting-live`);
+    liveWsRef.current = new WebSocket(`wss://natango-os-production.up.railway.app/api/meeting-live`);
 
     liveWsRef.current.onopen = async () => {
       // On signale au serveur qui parle

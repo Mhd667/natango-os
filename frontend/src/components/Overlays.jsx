@@ -32,7 +32,7 @@ export default function Overlays({
   handleQRScan
 }) {
 
-  const API_BASE_URL = 'http://localhost:5000';
+  const API_BASE_URL = 'https://natango-os-production.up.railway.app';
 
   // Si aucun overlay n'est actif, on ne rend rien
   if (!activeOverlay && !selectedCall) return null;
