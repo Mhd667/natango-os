@@ -1,3 +1,2 @@
-2026/04/18-00:57:36.193 14f0 Reusing MANIFEST E:\natango-project\backend\.wwebjs_auth\session\Default\shared_proto_db/MANIFEST-000001
-2026/04/18-00:57:36.256 14f0 Recovering log #3
-2026/04/18-00:57:36.265 14f0 Reusing old log E:\natango-project\backend\.wwebjs_auth\session\Default\shared_proto_db/000003.log 
+2026/04/19-00:45:37.593 3a48 Creating DB E:\natango-project\backend\.wwebjs_auth\session\Default\shared_proto_db since it was missing.
+2026/04/19-00:45:40.382 3a48 Reusing MANIFEST E:\natango-project\backend\.wwebjs_auth\session\Default\shared_proto_db/MANIFEST-000001

@@ -1,3 +1,2 @@
-2026/04/18-00:57:34.267 1f00 Reusing MANIFEST E:\natango-project\backend\.wwebjs_auth\session\Default\Site Characteristics Database/MANIFEST-000001
-2026/04/18-00:57:34.311 1f00 Recovering log #3
-2026/04/18-00:57:34.317 1f00 Reusing old log E:\natango-project\backend\.wwebjs_auth\session\Default\Site Characteristics Database/000003.log 
+2026/04/19-00:45:14.867 2d18 Creating DB E:\natango-project\backend\.wwebjs_auth\session\Default\Site Characteristics Database since it was missing.
+2026/04/19-00:45:28.722 2d18 Reusing MANIFEST E:\natango-project\backend\.wwebjs_auth\session\Default\Site Characteristics Database/MANIFEST-000001

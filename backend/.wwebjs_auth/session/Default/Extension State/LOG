@@ -1,3 +1,2 @@
-2026/04/18-00:57:35.967 3d20 Reusing MANIFEST E:\natango-project\backend\.wwebjs_auth\session\Default\Extension State/MANIFEST-000001
-2026/04/18-00:57:36.017 3d20 Recovering log #3
-2026/04/18-00:57:36.131 3d20 Reusing old log E:\natango-project\backend\.wwebjs_auth\session\Default\Extension State/000003.log 
+2026/04/19-00:45:41.005 5c0 Creating DB E:\natango-project\backend\.wwebjs_auth\session\Default\Extension State since it was missing.
+2026/04/19-00:45:41.560 5c0 Reusing MANIFEST E:\natango-project\backend\.wwebjs_auth\session\Default\Extension State/MANIFEST-000001

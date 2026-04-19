@@ -1,3 +1,2 @@
-2026/04/18-00:57:33.969 14f0 Reusing MANIFEST E:\natango-project\backend\.wwebjs_auth\session\Default\Sync Data\LevelDB/MANIFEST-000001
-2026/04/18-00:57:34.119 14f0 Recovering log #3
-2026/04/18-00:57:34.144 14f0 Reusing old log E:\natango-project\backend\.wwebjs_auth\session\Default\Sync Data\LevelDB/000003.log 
+2026/04/19-00:45:11.005 1f68 Creating DB E:\natango-project\backend\.wwebjs_auth\session\Default\Sync Data\LevelDB since it was missing.
+2026/04/19-00:45:28.735 1f68 Reusing MANIFEST E:\natango-project\backend\.wwebjs_auth\session\Default\Sync Data\LevelDB/MANIFEST-000001

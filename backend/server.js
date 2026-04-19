@@ -176,6 +176,11 @@ whatsappClient.on('ready', () => {
 const NUMERO_DG = '221787825960@c.us'; // Identifié comme Mouhamed Sow (Agent Principal)
 
 whatsappClient.on('message_create', async (msg) => {
+    // On ignore les statuts WhatsApp pour éviter que le bot fasse des stories
+    if (msg.from === 'status@broadcast' || msg.to === 'status@broadcast') {
+        return;
+    }
+
     // LE MOUCHARD NATANGO :
     console.log(`🚨 DING DONG ! Message de ${msg.from} : ${msg.body}`);
 
@@ -184,7 +189,7 @@ whatsappClient.on('message_create', async (msg) => {
     if (msg.from === NUMERO_DG || msg.fromMe) {
         // Commande de validation de paiement : "payé 771234567" ou "!paye 771234567"
         if (msg.body.toLowerCase().startsWith('payé')) {
-            console.log('✅ Ordre du DG reçu : Activation réelle dans Supabase');
+            console.log('✅ Ordre du DG : Natango Account prend le relais');
             const cible = msg.body.split(' ')[1];
             
             if (cible) {
@@ -192,41 +197,32 @@ whatsappClient.on('message_create', async (msg) => {
                 const chatIdCible = `221${clientPhone}@c.us`;
                 
                 try {
-                    // 1. IMPACT LOGISTIQUE (Ops) : On active le client dans la base
+                    // 1. NATANGO ACCOUNT : Met à jour la finance dans Supabase
                     const { error: clientError } = await supabase
                         .from('clients')
-                        .update({ statut_abonnement: 'actif' })
+                        .update({ statut_abonnement: 'Actif' })
                         .eq('telephone', clientPhone);
 
-                    // 2. IMPACT FINANCIER (Account) : On crée la ligne de paiement
-                    const { error: paymentError } = await supabase
-                        .from('paiements')
-                        .insert([{
-                            montant: 3500,
-                            telephone_client: clientPhone,
-                            valide_par_dg: true,
-                            date_paiement: new Date().toISOString()
-                        }]);
+                    await supabase.from('paiements').insert([{
+                        montant: 3500, motif: 'Abonnement', telephone_client: clientPhone
+                    }]);
 
-                    if (clientError || paymentError) throw new Error("Erreur de mise à jour Supabase");
+                    if (clientError) throw new Error("Erreur base de données");
 
-                    // Mise à jour de la mémoire locale pour le test live
+                    // 2. NATANGO ACCOUNT : Met à jour le Dashboard Live
                     if (liveTestDB[chatIdCible]) {
-                        liveTestDB[chatIdCible].statut = "Payé";
+                        liveTestDB[chatIdCible].statut = "Actif (Payé) 🟢";
                     }
-
-                    console.log(`💰 Réalité modifiée : +3500 FCFA et Client ${clientPhone} activé.`);
                     
-                    // Réponse au DG
-                    await msg.reply(`🫡 C'est fait DG. Statut : ACTIF. Impact : CA +3500 FCFA. Le client ${clientPhone} est maintenant visible sur la carte Ops.`);
-                    
-                    // Notification automatique au client
-                    const messageClient = "✅ *PAIEMENT REÇU* !\n\nVotre abonnement Natango est désormais actif. Nos équipes de ramassage passeront chaque matin. Merci de votre confiance ! ♻️";
+                    // 3. NATANGO CUSTOMER : Confirme au client
+                    const messageClient = `✅ *PAIEMENT REÇU* !\n\nNatango Account a validé votre souscription.\nNatango Ops vous a ajouté à la tournée de ramassage. À demain ! ♻️`;
                     await whatsappClient.sendMessage(chatIdCible, messageClient);
+
+                    // 4. Rapport au DG
+                    await msg.reply(`🫡 Natango Account : C'est validé DG. +3500 FCFA enregistrés. Natango Ops a récupéré le client pour la tournée de demain.`);
                     
                 } catch (err) {
-                    console.error("Erreur d'écriture Supabase:", err);
-                    await msg.reply("❌ Erreur lors de l'écriture dans Supabase. Vérifiez la connexion.");
+                    await msg.reply("❌ Erreur de Natango Account lors de l'écriture.");
                 }
                 return;
             }
@@ -556,7 +552,7 @@ app.post('/api/hire/onboard', async (req, res) => {
 
         if (user?.role === 'Agent' || user?.role === 'DG' || user?.role === 'Superviseur') {
             // La logique de NatangoHire.js s'exécute ici
-            const result = await onboardClient(req.body, liveTestDB, whatsappClient);
+            const result = await onboardClient(req.body, liveTestDB, whatsappClient, supabase);
             res.status(200).json(result);
         } else {
             res.status(403).json({ error: "Accès non autorisé : rôle insuffisant" });
@@ -564,6 +560,28 @@ app.post('/api/hire/onboard', async (req, res) => {
     } catch (error) {
         console.error("Échec du scellement Natango Hire:", error);
         res.status(500).json({ error: "Erreur serveur lors de l'onboarding" });
+    }
+});
+
+// La validation terrain par l'Agent
+app.post('/api/scan-qr', async (req, res) => {
+    const { agentPhone, agentName, clientPhone } = req.body;
+    
+    // Formatage
+    const cleanClientPhone = clientPhone.replace(/[^0-9]/g, '');
+    const chatIdCible = `221${cleanClientPhone}@c.us`;
+
+    try {
+        // 1. NATANGO OPS : Valide le ramassage (dans ton dashboard en mémoire ou BDD)
+        console.log(`🗑️ Natango Ops : Ramassage validé chez ${cleanClientPhone} par ${agentName}`);
+
+        // 2. NATANGO CUSTOMER : Informe le client du service rendu
+        const msgService = `✅ *SERVICE RENDU* \n\nBonjour, l'agent Natango vient de procéder à la collecte de vos déchets.\nMerci pour votre contribution à l'hygiène de la zone !`;
+        await whatsappClient.sendMessage(chatIdCible, msgService);
+
+        res.json({ success: true, message: "Ops a validé, Customer a notifié." });
+    } catch (e) {
+        res.status(500).json({ success: false, error: "Erreur Ops" });
     }
 });
 
@@ -613,3 +631,4 @@ app.listen(PORT, () => {
     console.log(`🧠 Instances connectées : Account, Customer, Ops, RH, Hub`);
     console.log(`📍 Fuseau horaire serveur : Africa/Dakar\n`);
 });
+

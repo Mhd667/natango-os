@@ -1,3 +1,2 @@
-2026/04/18-00:57:34.029 2f2c Reusing MANIFEST E:\natango-project\backend\.wwebjs_auth\session\Default\Service Worker\Database/MANIFEST-000001
-2026/04/18-00:57:34.053 2f2c Recovering log #3
-2026/04/18-00:57:34.078 2f2c Reusing old log E:\natango-project\backend\.wwebjs_auth\session\Default\Service Worker\Database/000003.log 
+2026/04/19-00:46:03.723 1ddc Creating DB E:\natango-project\backend\.wwebjs_auth\session\Default\Service Worker\Database since it was missing.
+2026/04/19-00:46:04.174 1ddc Reusing MANIFEST E:\natango-project\backend\.wwebjs_auth\session\Default\Service Worker\Database/MANIFEST-000001
