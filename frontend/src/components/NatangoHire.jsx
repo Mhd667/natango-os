@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { MapPin, QrCode, CheckCircle2, User, Home, Phone, X, Camera } from 'lucide-react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 
-export default function NatangoHire({ onClose, apiBaseUrl }) {
+export default function NatangoHire({ onClose, apiBaseUrl, currentUser }) {
   const [formData, setFormData] = useState({ nom: '', villa: '', phone: '', qrId: '' });
   const [gps, setGps] = useState(null);
   const [isSealing, setIsSealing] = useState(false);
@@ -62,7 +62,10 @@ export default function NatangoHire({ onClose, apiBaseUrl }) {
     try {
       const response = await fetch(`${apiBaseUrl}/api/hire/onboard`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'user_id': currentUser?.phone // 👈 On envoie le téléphone de l'agent pour authentification
+        },
         body: JSON.stringify({ ...formData, lat: gps.lat, lng: gps.lng })
       });
       
@@ -71,6 +74,9 @@ export default function NatangoHire({ onClose, apiBaseUrl }) {
         // Reset le form pour la prochaine maison
         setFormData({ nom: '', villa: '', phone: '', qrId: '' });
         setGps(null);
+      } else {
+        const errorData = await response.json();
+        alert(`❌ Erreur: ${errorData.error || 'Échec du scellement'}`);
       }
     } catch (error) {
       alert("❌ Erreur de connexion au serveur.");

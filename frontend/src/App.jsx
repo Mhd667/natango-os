@@ -1220,7 +1220,7 @@ export default function App() {
 
           {/* 📱 PORTAIL NATANGO HIRE (SCELLAGE TERRAIN) */}
           {activeOverlay === 'hire' && (
-            <NatangoHire apiBaseUrl={API_BASE_URL} onClose={() => setActiveOverlay(null)} />
+            <NatangoHire apiBaseUrl={API_BASE_URL} onClose={() => setActiveOverlay(null)} currentUser={currentUser} />
           )}
   
           {/* MOBILE NAV */}

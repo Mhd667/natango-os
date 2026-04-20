@@ -164,6 +164,7 @@ const puppeteerArgs = isLinux
 
 const whatsappClient = new Client({
     authStrategy: new LocalAuth(),
+    authTimeoutMs: 0, // Désactive le timeout d'authentification pour éviter les crashs si le scan est lent
     puppeteer: {
         headless: true,
         args: puppeteerArgs,
@@ -550,29 +551,34 @@ app.post('/api/billing/send-month-end', async (req, res) => {
 // Route API pour le scellement terrain (Natango Hire)
 app.post('/api/hire/onboard', async (req, res) => {
     try {
-        // On vérifie d'abord dans Supabase si l'envoyeur est bien un 'agent' ou 'dg'
+        // L'application frontale envoie le numéro de l'agent dans ce header
         const { user_id } = req.headers; 
         
         if (!user_id) {
             return res.status(401).json({ error: "Identification requise" });
         }
 
-        // On vérifie le rôle (On cherche dans authorized_users car c'est la table utilisée dans /api/auth/login)
-        const { data: user } = await supabase
+        // ✅ LE FIX EST ICI : On cherche par 'phone_number', pas par 'id'
+        const { data: user, error: authError } = await supabase
             .from('authorized_users')
             .select('role')
-            .eq('id', user_id)
+            .eq('phone_number', user_id) 
             .single();
 
-        if (user?.role === 'Agent' || user?.role === 'DG' || user?.role === 'Superviseur') {
-            // La logique de NatangoHire.js s'exécute ici
+        if (authError || !user) {
+            console.error("Agent non reconnu:", authError);
+            return res.status(403).json({ error: "Agent introuvable dans la base." });
+        }
+
+        if (user.role === 'Agent' || user.role === 'DG' || user.role === 'Superviseur') {
+            // L'agent est validé ! On lance l'enregistrement et le message WhatsApp
             const result = await onboardClient(req.body, liveTestDB, whatsappClient, supabase);
             res.status(200).json(result);
         } else {
-            res.status(403).json({ error: "Accès non autorisé : rôle insuffisant" });
+            res.status(403).json({ error: "Accès non autorisé" });
         }
     } catch (error) {
-        console.error("Échec du scellement Natango Hire:", error);
+        console.error("❌ Échec du scellement Natango Hire:", error);
         res.status(500).json({ error: "Erreur serveur lors de l'onboarding" });
     }
 });
