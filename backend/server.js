@@ -138,22 +138,36 @@ async function elevenLabsTTS(text) {
 }
 
 // ==========================================
-// 1.7. LE MOTEUR WHATSAPP (Version Railway)
+// 1.7. LE MOTEUR WHATSAPP
 // ==========================================
+// Les flags --single-process et --no-zygote crashent sur Windows.
+// On adapte les args selon l'environnement (Railway = Linux, Dev = Windows).
+const isLinux = process.platform === 'linux';
+const puppeteerArgs = isLinux
+    ? [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-gpu'
+    ]
+    : [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu'
+    ];
+
 const whatsappClient = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
-        headless: true, // 👈 Juste ça, on a retiré l'executablePath
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--single-process',
-            '--disable-gpu'
-        ]
+        headless: true,
+        args: puppeteerArgs,
+        protocolTimeout: 0 // Désactive le timeout du protocole pour éviter l'erreur Runtime.callFunctionOn timed out
     }
 });
 
